@@ -158,7 +158,7 @@ fn hit(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Makes the layer of what is at `at` (within `slop`) the active one, as a click does.
-fn activate_layer_at(s: &mut Session, at: Vec2, slop: f32) {
+pub(crate) fn activate_layer_at(s: &mut Session, at: Vec2, slop: f32) {
     if let Some((layer, _)) = s.hit_test(at, slop)
         && layer != s.layer
     {
@@ -263,6 +263,38 @@ pub(crate) fn edit_edge(s: &mut Session, id: ElementId, cmd: usize, old: &Cubic,
     Ok(changed)
 }
 
+/// Changes every copy of the edge `old` (stage space) into `new` (same ends): in every raw shape on
+/// the editable keyframe, or only in `only` (a drawing object edits itself alone). Returns the
+/// shapes that changed.
+pub(crate) fn follow_edge(s: &mut Session, only: Option<ElementId>, old: &Cubic, new: &Cubic) -> Result<Vec<ElementId>> {
+    let area = new.iter().chain(old).fold(Rect::EMPTY, |mut r, q| {
+        r.include(*q);
+        r
+    });
+    let kf = s.editable_keyframe()?;
+    let mut changed = Vec::new();
+    for e in kf.elements.iter_mut() {
+        let take = match only {
+            Some(id) => e.id == id,
+            None => mergeable(e).is_some_and(|x| !reach(x, &e.transform).intersect(&area).is_empty()),
+        };
+        if !take {
+            continue;
+        }
+        let (Some(inv), ElementKind::Shape(x)) = (e.transform.inverse(), &e.kind) else { continue };
+        let mut edited = (*x.path).clone();
+        if rawgeom::follow(&mut edited, &rawgeom::transform(old, &inv), &rawgeom::transform(new, &inv), SNAP / e.transform.mean_scale().max(1e-6)) == 0 {
+            continue;
+        }
+        check_extent(&edited)?;
+        if let ElementKind::Shape(x) = &mut Arc::make_mut(e).kind {
+            x.path = Arc::new(edited);
+        }
+        changed.push(e.id);
+    }
+    Ok(changed)
+}
+
 // ----- moving shared points ---------------------------------------------------------------------
 
 fn points_param(p: &Value) -> Result<Option<Vec<(ElementId, usize)>>> {
@@ -332,7 +364,7 @@ fn shared_points(s: &mut Session, at: Vec2) -> Result<Vec<(ElementId, usize)>> {
 fn move_point(s: &mut Session, p: &Value) -> Result<Value> {
     let from = Vec2::new(f32_req(p, "x")?, f32_req(p, "y")?);
     let to = Vec2::new(f32_req(p, "to_x")?, f32_req(p, "to_y")?);
-    let radius = s.style.snap_radius(opt_f32(p, "snap")?.unwrap_or(0.0).clamp(0.0, 1000.0));
+    let radius = opt_f32(p, "snap")?.unwrap_or(0.0).clamp(0.0, 1000.0);
     let slop = opt_f32(p, "slop")?.unwrap_or(2.0).clamp(0.0, 100.0);
     let merge_after = opt_bool(p, "merge")?.unwrap_or(true);
     let points = match points_param(p)? {
@@ -366,7 +398,7 @@ fn move_point(s: &mut Session, p: &Value) -> Result<Value> {
         _ => None,
     });
     let cur = cur.ok_or_else(|| EngineError::Param(format!("no point ({}, {cmd0}) on the active layer", id0.0)))?;
-    let snapped = if radius > 0.0 { snap_point(&els, to, radius, &points) } else { None };
+    let snapped = if s.snaps(radius) { snap_point(s, &els, to, radius, &points) } else { None };
     let target = snapped.map_or(to, |(q, _)| q);
     let d = target - cur;
     let kf = s.editable_keyframe()?;
@@ -408,23 +440,9 @@ fn move_point(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ----- snapping ---------------------------------------------------------------------------------
 
-/// What a dragged point snapped to.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SnapTo {
-    /// An anchor (corner or end).
-    Point,
-    /// A stroke or a fill's edge.
-    Line,
-}
-
-impl SnapTo {
-    pub fn key(&self) -> &'static str {
-        match self {
-            SnapTo::Point => "point",
-            SnapTo::Line => "line",
-        }
-    }
-}
+/// What a dragged point snapped to (the snap engine's, ADR 0076).
+pub use crate::snap::SnapTo;
+use crate::snap::{ObjectTargets, resolve};
 
 /// Anchors and segments to snap to, in stage space.
 #[derive(Default)]
@@ -460,30 +478,35 @@ fn targets(els: &[Arc<Element>], skip_el: impl Fn(ElementId) -> bool, skip_point
     t
 }
 
-/// The nearest anchor within `radius` of `p`, else the nearest point on a segment.
-fn snap_to(t: &Targets, p: Vec2, radius: f32) -> Option<(Vec2, SnapTo, f32)> {
-    let point = t.points.iter().map(|q| (*q, q.distance(p))).filter(|(_, d)| *d <= radius).min_by(|a, b| a.1.total_cmp(&b.1));
-    if let Some((q, d)) = point {
-        return Some((q, SnapTo::Point, d));
+impl ObjectTargets for Targets {
+    /// The nearest anchor within `radius` of `p`.
+    fn nearest_point(&self, p: Vec2, radius: f32) -> Option<(Vec2, f32)> {
+        self.points.iter().map(|q| (*q, q.distance(p))).filter(|(_, d)| *d <= radius).min_by(|a, b| a.1.total_cmp(&b.1))
     }
-    let near = |c: &Cubic| {
-        let (lo, hi) = c.iter().fold((Vec2::new(f32::INFINITY, f32::INFINITY), Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY)), |(lo, hi), q| (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y))));
-        p.x >= lo.x - radius && p.x <= hi.x + radius && p.y >= lo.y - radius && p.y <= hi.y + radius
-    };
-    t.segs
-        .iter()
-        .filter(|c| near(c))
-        .map(|c| {
-            let (u, d) = rawgeom::nearest(c, p);
-            (cubic_point(c, u), d)
-        })
-        .filter(|(_, d)| *d <= radius)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(q, d)| (q, SnapTo::Line, d))
+    /// The nearest point on a segment within `radius` of `p`.
+    fn nearest_line(&self, p: Vec2, radius: f32) -> Option<(Vec2, f32)> {
+        let near = |c: &Cubic| {
+            let (lo, hi) = c.iter().fold((Vec2::new(f32::INFINITY, f32::INFINITY), Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY)), |(lo, hi), q| (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y))));
+            p.x >= lo.x - radius && p.x <= hi.x + radius && p.y >= lo.y - radius && p.y <= hi.y + radius
+        };
+        self.segs
+            .iter()
+            .filter(|c| near(c))
+            .map(|c| {
+                let (u, d) = rawgeom::nearest(c, p);
+                (cubic_point(c, u), d)
+            })
+            .filter(|(_, d)| *d <= radius)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
 }
 
-/// Where a point being moved (`moving`: the anchors that go with it) snaps near `to`.
-fn snap_point(els: &[Arc<Element>], to: Vec2, radius: f32, moving: &[(ElementId, usize)]) -> Option<(Vec2, SnapTo)> {
+/// Where a point being moved (`moving`: the anchors that go with it) snaps near `to`: the
+/// artwork that stays put, the guides, the grid and pixels (ADR 0076).
+fn snap_point(s: &Session, els: &[Arc<Element>], to: Vec2, radius: f32, moving: &[(ElementId, usize)]) -> Option<(Vec2, SnapTo)> {
+    if !s.style.snap_objects {
+        return resolve(s, to, radius, None);
+    }
     // The segments leaving the moving anchors move too.
     let mut segs: BTreeSet<(ElementId, usize)> = BTreeSet::new();
     for e in els {
@@ -494,14 +517,52 @@ fn snap_point(els: &[Arc<Element>], to: Vec2, radius: f32, moving: &[(ElementId,
         }
     }
     let t = targets(els, |_| false, |id, c| moving.contains(&(id, c)), |id, k| segs.contains(&(id, k)));
-    snap_to(&t, to, radius).map(|(q, k, _)| (q, k))
+    resolve(s, to, radius, Some(&t))
 }
 
-/// After the selection moved: the extra move that snaps one of its anchors (the nearest to
-/// `from` when given, else whichever comes closest) onto an anchor or line of the shapes that
-/// did not move, within `radius`.
+/// Where a point drawn at `p` snaps (the Line, Rectangle, Oval, PolyStar and Pen tools, ADR
+/// 0045; the Free Transform tool's handles): the nearest anchor within `radius`, else a guide,
+/// a line or fill edge of what the stage shows near it, the grid or a pixel (ADR 0076). With
+/// `moving`, the selection is what moves, so it isn't snapped to.
+pub(crate) fn snap_drawn(s: &Session, p: Vec2, radius: f32, moving: bool) -> Option<(Vec2, SnapTo)> {
+    if !(radius > 0.0 && p.is_finite()) {
+        return None;
+    }
+    if !s.style.snap_objects {
+        return resolve(s, p, radius, None);
+    }
+    let dl = s.display_list();
+    let mut t = Targets::default();
+    for item in dl.items.iter().filter(|i| !(moving && s.selection.contains(i.layer, i.element))) {
+        if t.points.len() + t.segs.len() > MAX_TARGETS {
+            break;
+        }
+        let pad = item.stroke.as_ref().map_or(0.0, |st| st.reach() * item.transform.mean_scale());
+        if !item.path.bounds().transformed(&item.transform).inflate(pad + radius).contains(p) {
+            continue;
+        }
+        let mut path = (*item.path).clone();
+        path.close_explicitly();
+        t.points.extend(path.editable_anchors().into_iter().map(|(_, q)| item.transform.apply(q)));
+        t.segs.extend((0..path.cmds.len().min(MAX_TARGETS)).filter_map(|k| rawgeom::segment_cubic(&path, k)).map(|c| rawgeom::transform(&c, &item.transform)));
+    }
+    resolve(s, p, radius, Some(&t))
+}
+
+/// After the selection moved: the extra move that snaps one of its anchors or its bounding
+/// box's corners or centre (the nearest to `from` when given, else whichever snaps best) onto
+/// an anchor or line of the shapes that did not move, a guide, the grid or a pixel, within
+/// `radius` (ADR 0041, 0076).
 pub(crate) fn snap_selection(s: &Session, radius: f32, from: Option<Vec2>) -> Option<(Vec2, Vec2, SnapTo)> {
     let mut own: Vec<Vec2> = Vec::new();
+    // The box's corners and centre: what symbols, text and bitmaps snap by. The selection has
+    // just moved, so the display list is looked at again.
+    s.dl_cache.replace(None);
+    let b = s.selection_bounds();
+    if !b.is_empty() {
+        let c = Vec2::new((b.min.x + b.max.x) * 0.5, (b.min.y + b.max.y) * 0.5);
+        own.extend([b.min, Vec2::new(b.max.x, b.min.y), b.max, Vec2::new(b.min.x, b.max.y), c]);
+    }
     for (_, e) in s.selected_elements() {
         if let ElementKind::Shape(sh) = &e.kind {
             own.extend(sh.path.editable_anchors().into_iter().map(|(_, q)| e.transform.apply(q)));
@@ -518,12 +579,15 @@ pub(crate) fn snap_selection(s: &Session, radius: f32, from: Option<Vec2>) -> Op
         return None;
     }
     // What stays put on the layers the selection is on (ADR 0044).
-    let rest: Vec<Arc<Element>> = s.selected_layers().into_iter().flat_map(|l| s.elements_on(l).into_iter().filter(move |e| !s.selection.contains(l, e.id))).collect();
-    let t = targets(&rest, |_| false, |_, _| false, |_, _| false);
+    let t = s.style.snap_objects.then(|| {
+        let rest: Vec<Arc<Element>> = s.selected_layers().into_iter().flat_map(|l| s.elements_on(l).into_iter().filter(move |e| !s.selection.contains(l, e.id))).collect();
+        targets(&rest, |_| false, |_, _| false, |_, _| false)
+    });
+    let t = t.as_ref().map(|t| t as &dyn ObjectTargets);
     candidates
         .into_iter()
-        .filter_map(|c| snap_to(&t, c, radius).map(|(q, k, d)| (c, q, k, d)))
-        .min_by(|a, b| a.3.total_cmp(&b.3))
+        .filter_map(|c| resolve(s, c, radius, t).map(|(q, k)| (c, q, k, q.distance(c))))
+        .min_by(|a, b| a.2.rank().cmp(&b.2.rank()).then(a.3.total_cmp(&b.3)))
         .map(|(c, q, k, _)| (q - c, q, k))
 }
 
@@ -555,7 +619,7 @@ fn select_rect(s: &mut Session, p: &Value) -> Result<Value> {
     // What each layer has under the marquee, from one display list: wholly inside, or (raw
     // shapes) partly.
     let mut found: Vec<(LayerId, Vec<ElementId>, Vec<ElementId>)> = Vec::new();
-    let layers: Vec<LayerId> = s.doc.timeline(s.scene).layers.iter().map(|l| l.id).filter(|l| s.gathers(*l)).collect();
+    let layers: Vec<LayerId> = s.timeline().layers.iter().map(|l| l.id).filter(|l| s.gathers(*l)).collect();
     for l in layers {
         let (mut picked, mut partial) = (Vec::new(), Vec::new());
         for e in s.elements_on(l) {

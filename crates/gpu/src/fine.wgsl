@@ -1,14 +1,17 @@
 // AniCraft GPU stage: fine rasterization (ADR 0019, ADR 0029).
 //
 // One workgroup per 16 × 16 tile, one invocation per pixel. Each pixel walks its tile's entries
-// in drawing order. An entry's coverage is its backdrop (winding from edges left of the tile,
-// per pixel row) plus the exact area each of the tile's edge pieces covers in the pixel: the
-// same integral as the CPU oracle's accumulation buffer (crates/render/src/raster.rs). Then the
-// fill rule, the paint (solid, or the oracle's own 256-entry gradient table) and src-over on
-// premultiplied colour, all in f32, as the oracle does.
+// in drawing order. An entry's coverage is its backdrop (the winding number just below the
+// tile's top-left corner, an integer; ADR 0048) plus the exact area each of the tile's edge
+// pieces covers in the pixel, the steps on the tile's left edge included: the same integral as
+// the CPU oracle's accumulation buffer (crates/render/src/raster.rs). Then the fill rule, the
+// paint (solid, or the oracle's own 256-entry gradient table) and src-over on premultiplied
+// colour, all in f32, as the oracle does. A hairline (ADR 0048) is 1 − the distance from the
+// pixel centre to its nearest segment (crates/render/src/hairline.rs).
 //
 // Masks and groups (ADR 0029) are control entries in the same list, mirroring the oracle's band
-// compositor (crates/render/src/lib.rs): clip artwork unites into a level's coverage, levels
+// compositor (crates/render/src/lib.rs): clip artwork unites into a level's coverage (a soft
+// mask's, ADR 0070, composites its paint and gives its opacity or luminance), levels
 // multiply into the clip coverage that clipped fills are scaled by; a group pushes the colour
 // so far and continues on transparent, and its close blends it into the colour below at the
 // group's alpha, in its blend mode (the W3C separable formulas, as the oracle's `blend`).
@@ -66,6 +69,7 @@ const LEVEL_END: u32 = 0x80000005u;
 const CLIPPED: u32 = 1u;
 const ART: u32 = 2u;
 const MAX_GROUP_DEPTH: u32 = 8u;
+const HAIRLINE: u32 = 2u;
 
 // Mean of clamp(u, 0, 1) for u running linearly from u0 to u1.
 fn avg_clamp(u0: f32, u1: f32) -> f32 {
@@ -100,6 +104,22 @@ fn piece_cover(s: vec4<f32>, px: f32, py: f32) -> f32 {
     let xb = s.x + (yb - s.y) * dxdy;
     let dir = select(-1.0, 1.0, s.w > s.y);
     return dir * (yb - ya) * avg_clamp(px + 1.0 - xa, px + 1.0 - xb);
+}
+
+// Distance from `p` to the segment `s` (x0, y0, x1, y1): hairline.rs › seg_dist, step by step.
+fn seg_dist(p: vec2<f32>, s: vec4<f32>) -> f32 {
+    let dx = s.z - s.x;
+    let dy = s.w - s.y;
+    let qx = p.x - s.x;
+    let qy = p.y - s.y;
+    let l = dx * dx + dy * dy;
+    var t = 0.0;
+    if l > 0.0 {
+        t = clamp((qx * dx + qy * dy) / l, 0.0, 1.0);
+    }
+    let ex = qx - dx * t;
+    let ey = qy - dy * t;
+    return sqrt(ex * ex + ey * ey);
 }
 
 fn fold(w: f32, rule: u32) -> f32 {
@@ -137,21 +157,26 @@ fn finite(v: f32) -> bool {
     return (bitcast<u32>(v) & 0x7f800000u) != 0x7f800000u;
 }
 
+// Rust's `rem_euclid` for i32 and `n` >= 1, without `%` on a negative operand: naga writes
+// WGSL's `%` as GLSL's, which leaves negative operands undefined, so on the GL backend
+// (llvmpipe in the FreeBSD VM) the texel left of or above a repeating bitmap's edge, -1, came
+// out wrong. The unsigned remainder is defined everywhere.
+fn wrap(i: i32, n: i32) -> i32 {
+    let r = i32(u32(abs(i)) % u32(n));
+    return select(r, select(n - r, 0, r == 0), i < 0);
+}
+
 // One bitmap tap at integer (x, y) (wrapped when repeating, then clamped to the edges as
 // `Pixels::at` does), through the colour effect, premultiplied.
-fn tap(slot: u32, x: i32, y: i32, size: vec2<i32>, repeat: bool, fx: vec4<f32>, tint: vec4<f32>) -> vec4<f32> {
+// The colour transform (ColorTransform::apply): each straight channel `c·mul + add`, clamped.
+fn tap(slot: u32, x: i32, y: i32, size: vec2<i32>, repeat: bool, mul: vec4<f32>, add: vec4<f32>) -> vec4<f32> {
     var q = vec2<i32>(x, y);
     if repeat {
-        q = ((q % size) + size) % size;
+        q = vec2<i32>(wrap(q.x, size.x), wrap(q.y, size.y));
     }
     q = clamp(q, vec2<i32>(0), size - vec2<i32>(1));
-    let c = texel(slot, q);
-    let keep = bitcast<u32>(tint.w);
-    let k = fx.z;
-    var rgb = clamp(c.rgb + (tint.rgb - c.rgb) * k, vec3<f32>(0.0), vec3<f32>(1.0));
-    rgb = select(vec3<f32>(0.0), rgb, vec3<bool>((keep & 1u) != 0u, (keep & 2u) != 0u, (keep & 4u) != 0u));
-    let a = clamp(c.a * fx.w, 0.0, 1.0);
-    return vec4<f32>(rgb * a, a);
+    let c = clamp(texel(slot, q) * mul + add, vec4<f32>(0.0), vec4<f32>(1.0));
+    return vec4<f32>(c.rgb * c.a, c.a);
 }
 
 // Rust's `rem_euclid` for f32.
@@ -160,14 +185,18 @@ fn rem_euclid(u: f32, n: f32) -> f32 {
     return select(r, r + n, r < 0.0);
 }
 
-// The oracle's bilinear sample of a bitmap at pixel centre `p` (paint.rs › sample).
-fn bitmap(base: u32, p: vec2<f32>) -> vec4<f32> {
+// The oracle's sample of a bitmap at pixel centre `p` (paint.rs › sample): bilinear, or the
+// pixel `p` falls in when the bitmap doesn't allow smoothing (flag bit 1).
+fn bitmap(base: u32, ramp: u32, p: vec2<f32>) -> vec4<f32> {
     let h0 = paints[base];
     let m = paints[base + 1u];
     let n = paints[base + 2u];
-    let tint = paints[base + 3u];
+    let mul = paints[ramp];
+    let add = paints[ramp + 1u];
     let slot = bitcast<u32>(h0.x);
-    let repeat = bitcast<u32>(h0.y) != 0u;
+    let flags = bitcast<u32>(h0.y);
+    let repeat = (flags & 1u) != 0u;
+    let nearest = (flags & 2u) != 0u;
     let size = vec2<i32>(i32(bitcast<u32>(h0.z)), i32(bitcast<u32>(h0.w)));
     let w = f32(size.x);
     let h = f32(size.y);
@@ -182,6 +211,9 @@ fn bitmap(base: u32, p: vec2<f32>) -> vec4<f32> {
     } else if u < 0.0 || v < 0.0 || u >= w || v >= h {
         return vec4<f32>(0.0);
     }
+    if nearest {
+        return tap(slot, i32(floor(u)), i32(floor(v)), size, repeat, mul, add);
+    }
     let fx_ = u - 0.5;
     let fy_ = v - 0.5;
     let x0 = floor(fx_);
@@ -190,10 +222,10 @@ fn bitmap(base: u32, p: vec2<f32>) -> vec4<f32> {
     let ty = fy_ - y0;
     let xi = i32(x0);
     let yi = i32(y0);
-    let a = tap(slot, xi, yi, size, repeat, n, tint);
-    let b = tap(slot, xi + 1, yi, size, repeat, n, tint);
-    let c = tap(slot, xi, yi + 1, size, repeat, n, tint);
-    let d = tap(slot, xi + 1, yi + 1, size, repeat, n, tint);
+    let a = tap(slot, xi, yi, size, repeat, mul, add);
+    let b = tap(slot, xi + 1, yi, size, repeat, mul, add);
+    let c = tap(slot, xi, yi + 1, size, repeat, mul, add);
+    let d = tap(slot, xi + 1, yi + 1, size, repeat, mul, add);
     let top = a + (b - a) * tx;
     let bottom = c + (d - c) * tx;
     return top + (bottom - top) * ty;
@@ -220,7 +252,7 @@ fn shade(op: u32, kind: u32, ramp: u32, p: vec2<f32>, x: u32, y: u32) -> vec4<f3
         return paints[base];
     }
     if kind == 3u {
-        return bitmap(base, p);
+        return bitmap(base, ramp, p);
     }
     if kind == 4u {
         return layer(base, x, y);
@@ -230,11 +262,36 @@ fn shade(op: u32, kind: u32, ramp: u32, p: vec2<f32>, x: u32, y: u32) -> vec4<f3
     let g = paints[base + 3u];
     // Pixel back to paint space: x' = a x + c y + e, y' = b x + d y + f.
     let q = vec2<f32>(m.x * p.x + m.z * p.y + n.x, m.y * p.x + m.w * p.y + n.y);
+    // Spread and focal point (crates/render/src/paint.rs › Spread::apply, focal_t).
+    let o = paints[base];
     var t: f32;
     if kind == 1u {
         t = dot(q - n.zw, g.xy);
     } else {
-        t = length(q - n.zw) * g.z;
+        let u = (q - n.zw) * g.z;
+        let f = o.y;
+        if f == 0.0 {
+            t = length(u);
+        } else {
+            let d = vec2<f32>(u.x - f, u.y);
+            let a = 1.0 - f * f;
+            let fd = f * d.x;
+            t = (fd + sqrt(max(fd * fd + a * dot(d, d), 0.0))) / a;
+        }
+    }
+    let spread = u32(o.x + 0.5);
+    if spread == 2u {
+        t = t - floor(t);
+        if t >= 1.0 {
+            t = 0.0;
+        }
+    } else if spread == 1u {
+        let m = t - 2.0 * floor(t * 0.5);
+        if m > 1.0 {
+            t = 2.0 - m;
+        } else {
+            t = m;
+        }
     }
     t = clamp(t, 0.0, 1.0);
     let i = u32(t * 255.0 + 0.5) & 255u;
@@ -328,6 +385,10 @@ fn pixel(wg: vec3<u32>, lid: vec3<u32>) -> vec4<f32> {
     var depth = 0u;
     var mask = 1.0;
     var level = 0.0;
+    // A soft mask's level (ADR 0070): its mode (0 coverage, 1 alpha, 2 luminance) and its
+    // artwork's colour so far.
+    var level_mode = 0u;
+    var level_colour = vec4<f32>(0.0);
     let start = index[tile * 2u];
     let count = index[tile * 2u + 1u];
     for (var i = 0u; i < count; i++) {
@@ -349,26 +410,61 @@ fn pixel(wg: vec3<u32>, lid: vec3<u32>) -> vec4<f32> {
                     }
                 }
                 case MASK_RESET: { mask = 1.0; }
-                case LEVEL_BEGIN: { level = 0.0; }
-                case LEVEL_END: { mask *= level; }
+                case LEVEL_BEGIN: {
+                    level = 0.0;
+                    level_mode = index[e + 1u];
+                    level_colour = vec4<f32>(0.0);
+                }
+                case LEVEL_END: {
+                    // The oracle's MaskMode::reveal: opacity, or luminance (sRGB coefficients).
+                    if level_mode == 1u {
+                        level = level_colour.a;
+                    } else if level_mode == 2u {
+                        level = dot(level_colour.rgb, vec3<f32>(0.2125, 0.7154, 0.0721));
+                    }
+                    mask *= clamp(level, 0.0, 1.0);
+                }
                 default: {}
             }
             continue;
         }
         let first = index[e + 1u];
         let pieces = index[e + 2u];
-        let bd = index[e + 3u];
-        var w = 0.0;
-        if bd != NONE {
-            w = geo[bd + (lid.y >> 2u)][lid.y & 3u];
-        }
-        for (var k = 0u; k < pieces; k++) {
-            w += piece_cover(geo[first + k], px, py);
-        }
         let h = params.at.y + op * 4u;
-        var cov = fold(w, index[h + 1u]);
+        let rule = index[h + 1u];
+        var cov = 0.0;
+        if rule == HAIRLINE {
+            var d = 2.0;
+            let pc = vec2<f32>(px + 0.5, py + 0.5);
+            for (var k = 0u; k < pieces; k++) {
+                let sg = geo[first + k];
+                // Out of reach of the segment's box: at least 1 away, so it can't be nearest
+                // within reach (the coverage comes out the same, without the division).
+                let lo = min(sg.xy, sg.zw) - vec2<f32>(1.0);
+                let hi = max(sg.xy, sg.zw) + vec2<f32>(1.0);
+                if any(pc < lo) || any(pc > hi) {
+                    continue;
+                }
+                d = min(d, seg_dist(pc, sg));
+            }
+            cov = clamp(1.0 - d, 0.0, 1.0);
+        } else {
+            var w = f32(bitcast<i32>(index[e + 3u]));
+            for (var k = 0u; k < pieces; k++) {
+                w += piece_cover(geo[first + k], px, py);
+            }
+            cov = fold(w, rule);
+        }
         let flags = index[h + 3u];
         if (flags & ART) != 0u {
+            if level_mode != 0u {
+                // Soft mask artwork composites as drawn (the oracle's `composite`).
+                if cov > 1e-4 {
+                    let s = shade(op, index[h], index[h + 2u], centre, x, y);
+                    level_colour = s * cov + level_colour * (1.0 - s.a * cov);
+                }
+                continue;
+            }
             let k = clamp(cov, 0.0, 1.0);
             level = level + k - level * k;
             continue;
