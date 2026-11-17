@@ -171,6 +171,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         Some(Ok(Some(path))) => {
             e.path = path.display().to_string();
             e.answer = None;
+            e.asking = false;
         }
         Some(Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected)) => e.answer = None,
         _ => {}
