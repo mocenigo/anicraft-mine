@@ -3736,10 +3736,10 @@ impl App {
         }
         // Documents the system handed over while running (macOS: Finder, the Dock; ADR 0062).
         for r in platform::take_requests() {
-            // Not while a file dialog is up (a sheet on macOS): its answer is for this document,
-            // and Quit would close the window under it.
+            // Not while a file dialog is up (a sheet on macOS, the plug-in Browse… one too): its
+            // answer is for this document, and Quit would close the window under it.
             #[cfg(not(target_arch = "wasm32"))]
-            if self.file_dialog.is_some() {
+            if self.file_dialog.is_some() || crate::plugin_export_ui::sheet_pending(self) {
                 platform::push_request(r);
                 continue;
             }

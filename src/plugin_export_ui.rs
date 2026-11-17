@@ -147,6 +147,11 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+/// Whether a Browse… save dialog is asked for or still waiting for its answer.
+pub fn sheet_pending(app: &App) -> bool {
+    app.plugin_export.as_ref().is_some_and(|e| e.browse || e.answer.is_some())
+}
+
 /// Shows the save dialog Browse… asked for, from the end of the frame, where it has the window
 /// (on macOS a sheet: a dialog run inside the frame aborts the app, see `start_file_dialog`).
 #[cfg(not(target_arch = "wasm32"))]
