@@ -3730,6 +3730,12 @@ impl App {
         }
         // Documents the system handed over while running (macOS: Finder, the Dock; ADR 0062).
         for r in platform::take_requests() {
+            // Not while a file dialog is up (a sheet on macOS): its answer is for this document.
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.file_dialog.is_some() {
+                platform::push_request(r);
+                continue;
+            }
             self.system_request(&ctx, r);
         }
         if self.glyph_check {
@@ -3901,5 +3907,37 @@ mod prompt_enter_tests {
         ctx.run_ui(input(vec![enter]), |_| app.prompt_window(&ctx)).textures_delta.clear();
         assert!(app.prompt.is_none(), "Enter closes the rename prompt");
         assert_eq!(app.s.active_layer().unwrap().name, "Renamed");
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod file_dialog_tests {
+    use super::*;
+
+    /// A document the system hands over while a file dialog is up waits for its answer, so a
+    /// Save As saves the document that asked, not the one opened meanwhile.
+    #[test]
+    fn system_open_waits_for_the_file_dialog() {
+        let dir = std::env::temp_dir().join(format!("anicraft-shell-dialog-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("other.anicraft");
+        let mut s = anicraft_engine::Session::new(anicraft_engine::doc::sample::demo());
+        s.execute("file.save", &json!({"path": other.display().to_string()})).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::new(anicraft_engine::doc::sample::demo()), Some(PathBuf::from("unused.png")));
+        let frame = |app: &mut App| {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+            ctx.run_ui(input, |ui| app.frame(ui)).textures_delta.clear();
+        };
+        let (_answer, rx) = std::sync::mpsc::channel();
+        app.file_dialog = Some(("file.save_as", "path", rx));
+        platform::push_request(platform::SystemRequest::Open(vec![other.clone()]));
+        frame(&mut app);
+        assert_eq!(app.s.path, None, "nothing opens while the dialog is up");
+        app.file_dialog = None;
+        frame(&mut app);
+        assert_eq!(app.s.path.as_deref(), Some(other.as_path()), "it opens once the dialog has answered");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
