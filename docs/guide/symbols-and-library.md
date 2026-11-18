@@ -35,8 +35,9 @@ To turn artwork into a symbol:
 1. Select the artwork. It can be on several layers.
 2. Choose **Modify › Convert to Symbol…** (**F8**), or click **Convert to Symbol** at the
    bottom of Properties.
-3. Type a **Name**, choose a **Type** (Graphic, Movie clip or Button), and choose the Library
-   **Folder** it goes into.
+3. Type a **Name**, choose a **Type** (Movie clip, Button or Graphic), and choose the Library
+   **Folder** it goes into. The first time, the type is Movie clip, as in Animate; after that
+   the dialog offers the type and folder you chose last.
 4. Press **OK**.
 
 The artwork is replaced by an instance of the new symbol. If you selected artwork on several

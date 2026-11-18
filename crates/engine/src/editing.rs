@@ -384,7 +384,7 @@ fn placed(doc: &mut Document, timeline: Timeline, transform: Affine, frame: u32,
         name: String::new(),
         transform,
         color,
-        kind: ElementKind::Symbol { symbol, loop_mode: LoopMode::SingleFrame, first_frame: frame, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
+        kind: ElementKind::Symbol { symbol, loop_mode: LoopMode::SingleFrame, first_frame: frame, blend: Default::default(), filters: Vec::new(), events: Vec::new(), pivot: None },
     }));
     let mut layer = Layer::new(LayerId(doc.alloc_id()), "");
     layer.keyframes.push(Arc::new(k));

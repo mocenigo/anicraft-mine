@@ -33,6 +33,8 @@ pub struct Snapshot {
     pub frame: u32,
     pub layer: LayerId,
     pub selection: crate::Selection,
+    /// Raw shapes a paste left floating in that state (they merge when deselected).
+    pub floating: Option<crate::Floating>,
     /// Estimated bytes this snapshot keeps alive that the neighbouring state does not share.
     pub bytes: usize,
     /// The commands the step from this state ran, in order, as a saved command would run them

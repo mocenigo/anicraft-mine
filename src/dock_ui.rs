@@ -1410,6 +1410,57 @@ mod tests {
         app.dock_view.drawn.iter().find(|d| d.over == over).copied()
     }
 
+    /// #423: dragging the Timeline's top edge covers or reveals the stage; the artwork keeps its
+    /// place on screen and its zoom, during the drag and after the release. A view that is still
+    /// as Fit in Window left it goes on fitting, and Fit in Window fits again afterwards.
+    #[test]
+    fn resizing_the_timeline_keeps_the_artwork_where_it_is_on_screen() {
+        let origin = |app: &App| {
+            let size = vec2(app.s.doc.stage.width as f32, app.s.doc.stage.height as f32);
+            app.stage_cache.canvas.center() + app.view.pan - size * app.view.zoom * 0.5
+        };
+        let drag_edge = |ctx: &egui::Context, app: &mut App, check: &mut dyn FnMut(&App)| {
+            let edge = drawn(app, Over::Group(Side::Bottom)).expect("the Timeline dock is drawn").header.center_top();
+            frame(ctx, app, pointer(edge, None));
+            frame(ctx, app, pointer(edge, Some(true)));
+            for i in 1..=8 {
+                frame(ctx, app, pointer(edge - vec2(0.0, i as f32 * 12.0), None));
+                check(app);
+            }
+            frame(ctx, app, pointer(edge - vec2(0.0, 96.0), Some(false)));
+            settle(ctx, app);
+            check(app);
+        };
+        // The artist's own view: 50 %, panned.
+        let (mut app, ctx) = app();
+        settle(&ctx, &mut app);
+        app.view.zoom = 0.5;
+        app.view.pan = vec2(73.0, -29.0);
+        settle(&ctx, &mut app);
+        let (before, height) = (origin(&app), app.stage_cache.canvas.height());
+        drag_edge(&ctx, &mut app, &mut |app| {
+            assert!((origin(app) - before).length() < 0.5, "the artwork moved: {:?} -> {:?}", before, origin(app));
+            assert_eq!(app.view.zoom, 0.5, "the zoom changed");
+        });
+        assert!(app.stage_cache.canvas.height() < height - 40.0, "the drag must resize the Timeline");
+        // Fit in Window still fits and centres.
+        app.view.fit = true;
+        settle(&ctx, &mut app);
+        let size = vec2(app.s.doc.stage.width as f32, app.s.doc.stage.height as f32);
+        assert_eq!(app.view.pan, egui::Vec2::ZERO);
+        assert!((origin(&app) + size * app.view.zoom * 0.5 - app.stage_cache.canvas.center()).length() < 0.5);
+        // And a view left as fitted keeps fitting the smaller or larger canvas.
+        let fitted = app.view.zoom;
+        let edge = drawn(&app, Over::Group(Side::Bottom)).expect("the Timeline dock is drawn").header.center_top();
+        frame(&ctx, &mut app, pointer(edge, None));
+        frame(&ctx, &mut app, pointer(edge, Some(true)));
+        frame(&ctx, &mut app, pointer(edge + vec2(0.0, 60.0), None));
+        frame(&ctx, &mut app, pointer(edge + vec2(0.0, 60.0), Some(false)));
+        settle(&ctx, &mut app);
+        assert_eq!(app.view.pan, egui::Vec2::ZERO, "a fitted view stays centred");
+        assert!(app.view.zoom > fitted, "a fitted view fits the larger canvas: {} -> {}", fitted, app.view.zoom);
+    }
+
     #[test]
     fn tabs_shrink_to_fit_and_short_names_stay_whole() {
         // They fit: as they are.

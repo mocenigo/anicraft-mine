@@ -423,6 +423,10 @@ fn enabled(app: &App, id: &str) -> bool {
         "edit.undo" => app.s.can_undo(),
         "edit.redo" => app.s.can_redo(),
         "edit.delete" | "edit.duplicate" | "modify.convert_to_symbol" | "modify.break_apart" | "arrange.bring_to_front" | "arrange.send_to_back" => !app.s.selection.is_empty(),
+        // Modify › Shape (ADR 0109): what the selection has for them.
+        "modify.lines_to_fills" => selected_shape(app, |sh| sh.stroke.is_some()),
+        "modify.expand_fill" => selected_shape(app, |sh| sh.fill.is_some()),
+        "modify.soften_fill_edges" => selected_shape(app, |sh| sh.fill.as_ref().is_some_and(|f| !matches!(f, anicraft_engine::doc::Paint::Bitmap { .. }))),
         "layer.delete" => app.s.timeline().layers.len() > 1,
         "scene.delete" => app.s.doc.scenes.len() > 1,
         // Ctrl+E opens the selected instance, or goes back to the document (ADR 0045).
@@ -445,6 +449,11 @@ fn enabled(app: &App, id: &str) -> bool {
         "timeline.remove_frame" | "timeline.create_tween" | "timeline.create_shape_tween" => app.s.active_layer().is_some_and(|l| l.keyframe_at(app.s.frame).is_some()),
         _ => true,
     }
+}
+
+/// Whether a selected shape passes `has` (looked at only while a menu is open).
+fn selected_shape(app: &App, has: impl Fn(&anicraft_engine::doc::Shape) -> bool) -> bool {
+    app.s.selected_elements().iter().any(|(_, e)| matches!(&e.kind, anicraft_engine::doc::ElementKind::Shape(sh) if has(sh)))
 }
 
 /// Whether a registry command that switches a setting has it on (`None`: not a setting).

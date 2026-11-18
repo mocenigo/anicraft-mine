@@ -95,7 +95,7 @@ With the **Selection** tool (**V**) on merged drawing:
   edges, plus any objects wholly inside it. **Shift** adds more. If you click away without
   changing anything, the drawing is whole again.
 * **Drag an unselected line** or the edge of a fill to **bend** it into a curve through the
-  pointer. Its ends stay put.
+  pointer. Its ends stay put, and a straight edge bends into one even arc wherever you grab it.
 * **Ctrl-drag** (**⌘-drag** on a Mac) a line or the edge of a fill to add a **corner point**
   where you pressed and pull it into a peak: on a straight edge, both sides stay straight.
 * **Drag an unselected corner or end** to move it. Every shape that shares the point moves
@@ -158,6 +158,9 @@ on rough paper; the grain stays put on the stage, so strokes laid over each othe
 stipple. Both are still ordinary vector shapes: they merge, erase, scale and export like any
 other paint, and the same stroke always comes out the same. The **Charcoal** and **Spatter**
 brushes in the Brush menu use them.
+
+The Brush and the Paint Brush keep their settings (size, tip, smoothing, pressure and the rest)
+when you close AniCraft, each tool its own.
 
 **Tilt.** Brushes can follow a pen's tilt: the tip turns with the way the pen leans (so a flat
 nib follows your hand), and paints wider as it leans, up to twice as wide lying flat. A mouse
@@ -226,6 +229,14 @@ has **No colour** instead. In the Tools panel's picker, with shapes selected, th
 pick goes onto them too. Below the recent colours, the picker shows the document's own
 swatches, and a fill's picker shows its gradient swatches under the fill type.
 
+While a colour picker is open, the pointer over the stage is an **eyedropper**: a small chip
+beside it shows the colour under it, and a click takes that colour into the picker and closes
+it. It takes the colour as it is drawn there, so it works on gradients, bitmaps, lines,
+symbols with colour effects and the stage itself, on any layer. The alpha you had set stays.
+**Esc** closes the picker without picking. Every colour swatch works this way, in dialogs
+too. (To pick up a whole style, such as a gradient or a line's width, use the
+[Eyedropper tool](#paint-bucket-ink-bottle-and-eyedropper).)
+
 ### Swatches
 
 **Window › Swatches** keeps the colours and gradients you use in this document, as Animate's
@@ -259,6 +270,12 @@ the drawing. To fade a whole symbol instance, or to tween a fade, use the colour
 **Alpha** (see [Colour effects](#colour-effects)).
 
 ### Line styles
+
+With shapes selected, **Properties** has a **Fill** and a **Stroke** row, each with a swatch and
+an on/off checkbox. Turning a fill or a stroke off and on again brings back the colour,
+gradient or line it had. With only an outline selected (double-click it), turning **Fill** on
+fills what the outline surrounds. The stroke **width** stops at a hairline (0.1) when you drag
+it all the way down; the checkbox is what removes a stroke.
 
 Properties has Animate's line settings, for selected lines and for the tools' new lines:
 **Style** (Solid, Dashed with dash and gap lengths, or Dotted with dot spacing), **Cap**
@@ -346,14 +363,94 @@ To erase inside one, **double-click** it with the Selection tool (or select it a
 **Ctrl+E**): it opens in place, and the Eraser works on its own lines and fills. A symbol
 changes everywhere it's used.
 
+### Lines to fills, expanding and softening fills
+
+**Modify › Shape** has three commands for the selected shapes.
+
+**Convert Lines to Fills** turns each selected line into a fill of the line's exact outline,
+in the line's colour: its caps, joins, dashes, dots and width profile included. Use it to
+reshape a line's edge with the Selection or Subselection tool, to fill it with a gradient, or
+to erase part of its thickness. A straight line becomes a four-cornered fill; a curve becomes
+a few curves, not hundreds of points. In merged drawing the new fill joins the drawing: it
+merges with a fill of the same colour that it touches and cuts into others, as any fill does.
+A drawing object keeps its own fill and gets the outline as a second object above it.
+
+**Expand Fill…** moves the edge of each selected fill out or in by a **Distance** in pixels.
+**Expand** grows the fill and rounds its corners, as if you had drawn round it with a round
+brush; **Inset** shrinks it and keeps the corners sharp. Holes get smaller as the fill grows,
+and a fill narrower than twice an inset disappears. The distance is in stage pixels whatever
+the shape's scale. A drawing object's line follows its new outline; in merged drawing the
+lines stay where they were.
+
+**Soften Fill Edges…** gives a fill a soft edge made of bands of its own colour that get
+fainter outwards. **Distance** is the width of the whole soft edge and **Steps** is the number
+of bands (1 to 50; more are smoother, and more shapes to draw). **Expand** adds the edge
+round the fill; **Inset** takes it from the fill, which keeps its size. With 4 steps the
+bands have 80 %, 60 %, 40 % and 20 % of the fill's alpha. It works on colour and gradient
+fills (a bitmap fill has no alpha to fade), and looks best on a fill without an outline. The
+fill and its bands are selected afterwards, so you can group them (**Ctrl+G**) or undo.
+
+Both dialogs remember what you entered. Each command is one undo step.
+
 ## Transforming artwork
 
 With the **Free Transform** tool (**Q**), drag a handle (a corner or the middle of an edge) to
-**scale** (**Shift** keeps the proportions, **Alt** scales from the centre), the line between
-two handles to **skew** (the opposite edge stays where it is; **Alt** skews about the centre),
-just outside a corner to **rotate** (**Shift** snaps to 15°), or inside the box to **move**.
-You can also type exact **Position**, **Scale** and **Rotation** values in Properties. The lock
-beside **Scale** keeps width and height in proportion.
+**scale** (**Shift** keeps the proportions, **Alt** scales about the transformation point),
+the line between two handles to **skew** (the opposite edge stays where it is; **Alt** skews
+about the transformation point), just outside a corner to **rotate** (the pointer turns
+into a curved arrow there; **Shift** snaps to 15°), or inside the box to **move**.
+
+One selected object shows **its own box**: turn a symbol, a group, text or a drawing object
+and its box turns with it, so you can see how it stands, and its handles stretch it along its
+own sides instead of slanting it. Several objects together, and merged drawing, show one
+upright box round them all.
+You can also type exact **Position**, **Size**, **Scale** and **Rotation** values in
+Properties. **Size** is the width (**W**) and height (**H**) of the selection's box in stage
+pixels: a new value stretches the artwork from the box's top-left corner, which stays where it
+is. The lock beside **Scale** keeps width and height in proportion.
+
+### The transformation point
+
+The **white circle** in Free Transform's box is the transformation point: what the selection
+rotates about, and what **Alt** scales and skews about. It starts at the centre.
+
+* **Drag the circle** to move it. It snaps to the box's corners, the middles of its sides and
+  its centre (hold **Alt** to place it freely), and it can sit outside the box.
+* **Double-click the circle** to put it back at the centre.
+* A **symbol instance keeps its point**. It travels with the instance, is saved in the file,
+  and is used everywhere the instance turns or scales: Free Transform, **Rotate 90°** and
+  **Flip**, the **Scale** and **Rotation** fields in Properties, and **tweens**. Put an arm's
+  point on its shoulder and a tween between two angles swings the arm from the shoulder.
+  Properties shows the point as **Pivot** (X and Y on the stage, and **Reset**), and **Modify ›
+  Transform › Reset Transformation Point** puts it back.
+* Anything else (a shape, a drawing object, a group, text, a bitmap, or several objects) has
+  a point **for as long as it stays selected with Free Transform**: move it, then rotate and
+  scale about it as often as you like. Picking another tool or another selection lets it go.
+  Convert the artwork to a symbol when you want a point that lasts.
+
+A press on the circle moves the circle, not the object: to move a small object, drag it by
+any other part of its box. Moving the circle is one undo step.
+
+### Several objects
+
+With several objects selected, **Transform about** in the Free Transform tool's options
+chooses what they turn, scale and skew about:
+
+* **The whole selection** (the default, as in Animate): the objects move together as one
+  arrangement, about the selection's point.
+* **Each object's own point**: each object is transformed where it stands. A symbol instance
+  or a group turns about its registration point (the small circle), so clock hands hinged at
+  their ends each swing on their own hinge; a shape, a drawing, a bitmap or text turns about
+  its centre.
+* **Each object's centre**: each object is transformed about the centre of its own box,
+  wherever its registration point is.
+
+The stage marks the point, or each object's point, with a crosshair. The choice stays as you
+change the selection, and **Rotate 90°** and **Flip** in **Modify › Transform** follow it
+too. The circle can be dragged only with **The whole selection**; in the other two it shows
+where each object's point is. Moving the selection always moves everything by the same amount. To change the choice
+from the keyboard, give **Modify › Transform › Next Transformation Origin** a key in the
+shortcut editor. A merged drawing (a fill and the lines on its edges) counts as one object.
 
 | Command | Menu | Key |
 |---|---|---|
@@ -361,6 +458,8 @@ beside **Scale** keeps width and height in proportion.
 | Rotate 90° CCW | **Modify › Transform** | **Ctrl+Shift+7** |
 | Flip Horizontal, Flip Vertical | **Modify › Transform** | none |
 | Remove Transform | **Modify › Transform** | **Ctrl+Shift+Z** |
+| Next Transformation Origin | **Modify › Transform** | none |
+| Reset Transformation Point | **Modify › Transform** | none |
 | Break Apart | **Modify** | **Ctrl+B** |
 
 **Break Apart** turns text into shapes, a symbol instance into the artwork inside it, and a
@@ -385,6 +484,15 @@ Warp mesh can't either: remove its warp first.
 **Paste in Place** (**Ctrl+Shift+V**), **Duplicate** (**Ctrl+D**) and **Clear** (**Delete**
 or **Backspace**). Copied artwork keeps its layers, and symbols travel with it to another
 document.
+
+Pasted merge-drawing shapes stay whole and selected on top of the drawing, as in Animate: drag
+them where you want them. They join the drawing under them when you deselect them or let go
+after a move, and **Undo** takes the paste back in one step.
+
+**Paste** also takes a picture copied in another app, such as a paint program or a screenshot:
+it lands in the middle of the view as a bitmap, and in the Library. AniCraft pastes whichever
+was copied last, its own artwork or the picture. (Desktop app only; drawings copied as vectors
+in other apps are not read yet: export them as SVG and import or drop the file.)
 
 ### Stacking order
 
@@ -539,7 +647,10 @@ without snapping. Rulers, the grid and guides never show in Test Movie or in exp
 
 ## Not there yet
 
-Not in AniCraft yet: gradient and bitmap strokes; swatch folders, bitmap swatches and the
+Not in AniCraft yet: gradient and bitmap strokes; a transformation point that a group, text
+or a drawing object keeps after it is deselected, the transformation point of instances in
+Animate files, and transformation points and origins with Edit Multiple Frames; picking a colour
+from outside the AniCraft window; previews in the Expand Fill and Soften Fill Edges dialogs; swatch folders, bitmap swatches and the
 swatches inside Animate files; moving the Envelope's handles from the keyboard; reading a
 pen's tilt on Windows, macOS and Linux (the brushes' tilt settings are ready for it); bitmap
 and art brushes; and Animate's ragged, stipple and hatched line styles (drawn

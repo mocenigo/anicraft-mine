@@ -40,6 +40,27 @@ fn tool_icon(tool: Tool) -> Icon {
     }
 }
 
+/// The sizes the Properties panel's W and H take, in stage pixels.
+const SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.1..=100_000.0;
+
+/// The stage-space affine `[a, b, c, d, e, f]` that makes the box `[x0, y0, x1, y1]` `w` wide and
+/// `h` high with its top-left corner where it is (#294). A side with no extent (a level line's
+/// height) can't be stretched and stays as it is; `None` when nothing would change or a size
+/// isn't a positive number.
+pub fn resize_affine(b: [f32; 4], w: f32, h: f32) -> Option<[f32; 6]> {
+    let [x0, y0, x1, y1] = b;
+    let (w0, h0) = (x1 - x0, y1 - y0);
+    if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 && w0.is_finite() && h0.is_finite()) {
+        return None;
+    }
+    let kx = if w0 > 1e-3 { w / w0 } else { 1.0 };
+    let ky = if h0 > 1e-3 { h / h0 } else { 1.0 };
+    if (kx - 1.0).abs() < 1e-6 && (ky - 1.0).abs() < 1e-6 {
+        return None;
+    }
+    Some([kx, 0.0, 0.0, ky, x0 * (1.0 - kx), y0 * (1.0 - ky)])
+}
+
 /// How the tools are laid out where they are (ADR 0087).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolFlow {
@@ -778,6 +799,10 @@ pub(crate) fn properties(app: &mut App, ui: &mut egui::Ui) {
             if on != app.s.style.snap_objects {
                 app.run("draw.snap_to_objects", json!({"on": on}));
             }
+            // What several selected objects turn and scale about (ADR 0109, #296).
+            if app.tool == Tool::Transform {
+                transform_origin_row(app, ui);
+            }
         });
     }
     // ---- the camera, with the Camera tool or its layer active (ADR 0027) ----
@@ -841,6 +866,49 @@ fn blend_row(app: &mut App, ui: &mut egui::Ui, current: anicraft_engine::doc::Bl
     });
 }
 
+/// A transformation origin's name, as Properties and the status line show it.
+pub(crate) fn transform_origin_label(mode: anicraft_engine::TransformOrigin) -> &'static str {
+    match mode {
+        anicraft_engine::TransformOrigin::Selection => tr!("The whole selection"),
+        anicraft_engine::TransformOrigin::Registration => tr!("Each object's own point"),
+        anicraft_engine::TransformOrigin::Center => tr!("Each object's centre"),
+    }
+}
+
+/// What each transformation origin does, for its tooltip.
+fn transform_origin_tip(mode: anicraft_engine::TransformOrigin) -> &'static str {
+    match mode {
+        anicraft_engine::TransformOrigin::Selection => tr!("The selected objects turn, scale and skew together, as one arrangement"),
+        anicraft_engine::TransformOrigin::Registration => tr!("Each selected object turns, scales and skews where it stands: a symbol or group about its registration point, anything else about its centre"),
+        anicraft_engine::TransformOrigin::Center => tr!("Each selected object turns, scales and skews about the centre of its own box"),
+    }
+}
+
+/// The Free Transform tool's Transform about row: the mode stays as set from one selection to
+/// the next (`modify.transform_origin`; the same command on a key moves to the next mode).
+fn transform_origin_row(app: &mut App, ui: &mut egui::Ui) {
+    let current = app.s.style.transform_origin;
+    let key = app.keymap.primary("modify.transform_origin").map(crate::platform::shortcut_label).filter(|k| !k.is_empty());
+    row_prose(ui, tr!("Transform about"), |ui| {
+        let tip = match &key {
+            Some(k) => tr!("What several selected objects are transformed about. {key} moves to the next choice.", key = k),
+            None => tr!("What several selected objects are transformed about. Give Modify › Transform › Next Transformation Origin a key in the shortcut editor to change it from the keyboard.").to_string(),
+        };
+        egui::ComboBox::from_id_salt("prop_transform_origin")
+            .selected_text(transform_origin_label(current))
+            .show_ui(ui, |ui| {
+                for mode in anicraft_engine::TransformOrigin::ALL {
+                    if ui.selectable_label(mode == current, transform_origin_label(mode)).on_hover_text(transform_origin_tip(mode)).clicked() && mode != current {
+                        app.run("modify.transform_origin", json!({"mode": mode.key()}));
+                    }
+                }
+            })
+            .response
+            .on_hover_text(tip)
+            .set_name(tr!("Transform about"));
+    });
+}
+
 /// A symbol type's name, as the Properties panel shows it.
 pub(crate) fn symbol_kind_label(kind: SymbolKind) -> &'static str {
     match kind {
@@ -874,6 +942,10 @@ pub(crate) fn element_title(doc: &anicraft_engine::doc::Document, e: &anicraft_e
     };
     if e.name.is_empty() { kind } else { tr!("{name} ({kind})", name = e.name, kind = kind) }
 }
+
+/// The thinnest stroke the Stroke width field makes (Animate's hairline); the Stroke checkbox
+/// removes a stroke (#393).
+const STROKE_HAIRLINE: f32 = 0.1;
 
 /// The Scale lock's link (#304): with the lock on, editing one Scale axis (percent, as the
 /// Properties panel shows it) adjusts the other so the selection keeps its width:height
@@ -1046,15 +1118,34 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
                 }
             });
         }
+        // Size (#294): the selection's box in stage pixels, as Animate's W and H. A change
+        // stretches the artwork from the box's top-left corner, which stays where it is.
+        let sb = app.s.selection_bounds();
+        if !sb.is_empty() && !matches!(e.kind, ElementKind::Camera) {
+            let (w0, h0) = (sb.max.x - sb.min.x, sb.max.y - sb.min.y);
+            let (mut w, mut h) = (w0, h0);
+            row(ui, tr!("Size"), |ui| {
+                let a = ui.add(egui::DragValue::new(&mut w).prefix("W ").speed(1.0).range(SIZE_RANGE).clamp_existing_to_range(false).max_decimals(1)).named(tr!("Width"));
+                let c = ui.add(egui::DragValue::new(&mut h).prefix("H ").speed(1.0).range(SIZE_RANGE).clamp_existing_to_range(false).max_decimals(1)).named(tr!("Height"));
+                if (a.changed() || c.changed())
+                    && let Some(m) = resize_affine([sb.min.x, sb.min.y, sb.max.x, sb.max.y], w, h)
+                {
+                    live(app, tr_noop!("Resize"), "modify.transform", json!({"a": m[0], "b": m[1], "c": m[2], "d": m[3], "e": m[4], "f": m[5]}));
+                }
+            });
+        }
         row(ui, tr!("Scale"), |ui| {
             let (sx0, sy0) = (sx, sy);
             // Negative is a mirror (Flip). Only edits are clamped: a scale merely shown is never
             // rewritten (#116). The engine refuses a scale too near zero.
+            // Whole percentages without a decimal ("100 %"), so both fields, the lock and the
+            // mixed mark fit beside the label at the dock's default width.
+            let percent = |v: f64, _: std::ops::RangeInclusive<usize>| if (v - v.round()).abs() < 0.05 { format!("{v:.0}") } else { format!("{v:.1}") };
             let a = ui
-                .add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1).custom_formatter(percent))
                 .named(tr!("Scale width"));
             let b = ui
-                .add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1).custom_formatter(percent))
                 .named(tr!("Scale height"));
             // The Scale lock (#304): view state, off by default. On, editing one axis scales
             // the other so the selection keeps its width:height proportion.
@@ -1072,7 +1163,13 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
                 }
                 live(app, tr_noop!("Scale"), "element.set_transform", json!({"sx": sx / 100.0, "sy": sy / 100.0}));
             }
-            mixed(ui, m.scale);
+            // Two fields and the lock fill the row: "mixed" as one faint mark (its hover says it
+            // in words), so the values stay beside their label instead of wrapping under it.
+            if m.scale {
+                ui.label(text(Type::Caption, "≠").color(T.text_faint))
+                    .on_hover_text(tr!("The selected elements differ here; it shows the first one's. A change applies to all of them"))
+                    .named(tr!("mixed"));
+            }
         });
         row(ui, tr!("Rotation"), |ui| {
             if ui.add(egui::DragValue::new(&mut rot).suffix("°").speed(0.5).range(-360.0..=360.0).max_decimals(1)).named(tr!("Rotation")).changed() {
@@ -1080,6 +1177,27 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             }
             mixed(ui, m.rotation);
         });
+        // The transformation point (ADR 0111): one symbol instance keeps its own, and the
+        // fields above (and Free Transform, and tweens) then turn and scale it about it.
+        if !many
+            && matches!(e.kind, ElementKind::Symbol { .. })
+            && let Some((at, moved)) = app.s.transformation_point()
+        {
+            let (mut px, mut py) = (at.x, at.y);
+            row(ui, tr!("Pivot"), |ui| {
+                let tip = tr!("The transformation point (the white circle Free Transform shows): what this instance turns, scales and skews about, on the stage, here and in tweens. Drag the circle with Free Transform, or set it here");
+                let a = ui.add(egui::DragValue::new(&mut px).prefix("X ").speed(1.0).max_decimals(1)).named(tr!("Transformation point X")).on_hover_text(tip);
+                let b = ui.add(egui::DragValue::new(&mut py).prefix("Y ").speed(1.0).max_decimals(1)).named(tr!("Transformation point Y")).on_hover_text(tip);
+                if a.changed() || b.changed() {
+                    live(app, tr_noop!("Move Transformation Point"), "modify.transformation_point", json!({"x": px, "y": py}));
+                }
+                // Back to the centre (double-clicking the circle does the same).
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if ui.add_enabled(moved, egui::Button::new(text(Type::Label, tr!("Reset")))).on_hover_text(tr!("Put the transformation point back at the centre")).named(tr!("Reset transformation point")).clicked() {
+                    app.run("modify.reset_transformation_point", json!({}));
+                }
+            });
+        }
         if !matches!(e.kind, ElementKind::Camera) {
             colour_effect_rows(app, ui, &e.color, m.color, EffectOf::Selection);
         }
@@ -1107,9 +1225,9 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             row_prose(ui, tr!("Type"), |ui| {
                 egui::ComboBox::from_id_salt("prop_symkind").width(crate::theme::fit(ui, 150.0)).selected_text(symbol_kind_label(kind)).show_ui(ui, |ui| {
                     for (k, id, tip) in [
-                        (SymbolKind::Graphic, "graphic", tr!("Keeps step with the timeline it is on (looping options below)")),
                         (SymbolKind::MovieClip, "movie_clip", tr!("Plays its own timeline on a loop, from when it appears")),
                         (SymbolKind::Button, "button", tr!("Shows its Up frame")),
+                        (SymbolKind::Graphic, "graphic", tr!("Keeps step with the timeline it is on (looping options below)")),
                     ] {
                         if ui.selectable_label(kind == k, symbol_kind_label(k)).on_hover_text(tip).clicked() && (kind != k || m.kind) {
                             // Every selected instance's symbol (ADR 0053), or just this one's.
@@ -1234,22 +1352,22 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             let fill = sh.fill.as_ref().map(Paint::primary_color);
             let bitmaps = crate::colour_panel::bitmaps(app);
             row(ui, tr!("Fill"), |ui| {
-                let c = fill.unwrap_or(Rgba::WHITE);
                 // The one colour picker, with the fill's type (ADR 0074): a gradient shows as its
                 // ramp here and is edited in the picker.
                 let (r, edit) = crate::colour_panel::swatch(ui, sh.fill.as_ref(), &bitmaps);
                 r.named(tr!("Fill colour")).on_hover_text(tr!("Fill: click for its colour and how clear it is, or a gradient or bitmap fill"));
                 match edit {
                     Some(crate::colour_panel::FillEdit::Solid(p)) => live(app, tr_noop!("Fill colour"), "element.set_fill", json!({"color": crate::colour::to_hex(p, true)})),
+                    // Off, then on again: the fill it had comes back, not white (#292).
                     Some(crate::colour_panel::FillEdit::None(n)) => {
-                        app.run("element.set_fill", if n { json!({"color": null}) } else { json!({"color": crate::colour::to_hex(rgba(c), true)}) });
+                        app.run("element.set_fill", json!({"on": !n}));
                     }
                     Some(edit) => crate::colour_panel::apply_set(app, &edit, true),
                     None => {}
                 }
                 let mut on = fill.is_some();
                 if crate::theme::checkbox(ui, &mut on, "").named(tr!("Fill")).on_hover_text(tr!("Fill on/off")).changed() {
-                    app.run("element.set_fill", if on { json!({"color": crate::colour::to_hex(rgba(c), true)}) } else { json!({"color": null}) });
+                    app.run("element.set_fill", json!({"on": on}));
                 }
                 if let Some(what) = fill_kind_label(sh.fill.as_ref()) {
                     ui.label(text(Type::Caption, what));
@@ -1260,13 +1378,20 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
                 bitmap_row(app, ui, *bitmap, m.bitmap);
             }
             let mut sc = rgba(sh.stroke.as_ref().map_or(app.s.style.stroke, |s| s.color));
-            let mut sw = sh.stroke.as_ref().map_or(0.0, |s| s.width);
+            let mut sw = sh.stroke.as_ref().map_or(app.s.style.stroke_width, |s| s.width);
             row(ui, tr!("Stroke"), |ui| {
                 if crate::colour::button_alpha(ui, &mut sc).named(tr!("Stroke colour")).on_hover_text(tr!("Stroke colour: click to pick the colour and how clear it is")).changed() {
                     live(app, tr_noop!("Stroke colour"), "element.set_stroke", json!({"color": crate::colour::to_hex(sc, true)}));
                 }
-                if ui.add(egui::DragValue::new(&mut sw).suffix(" px").speed(0.1).range(0.0..=200.0).max_decimals(1)).named(tr!("Stroke width")).changed() {
-                    live(app, tr_noop!("Stroke width"), "element.set_stroke", json!({"width": sw}));
+                // On/off like the fill, so the width can stop at a hairline: dragging it all the
+                // way down lands on 0.1 instead of removing the stroke (#393). A width already
+                // below that (an import) shows as it is until it is changed.
+                let mut on = sh.stroke.is_some();
+                if crate::theme::checkbox(ui, &mut on, "").named(tr!("Stroke")).on_hover_text(tr!("Stroke on/off")).changed() {
+                    app.run("element.set_stroke", json!({"on": on}));
+                }
+                if ui.add(egui::DragValue::new(&mut sw).suffix(" px").speed(0.1).range(STROKE_HAIRLINE..=200.0).clamp_existing_to_range(false).max_decimals(1)).named(tr!("Stroke width")).on_hover_text(tr!("Stroke width: drag all the way down for a hairline")).changed() {
+                    live(app, tr_noop!("Stroke width"), "element.set_stroke", json!({"width": sw.max(STROKE_HAIRLINE)}));
                 }
                 mixed(ui, m.stroke);
             });
@@ -3611,6 +3736,64 @@ mod tests {
         assert!(app.s.execute("element.set_transform", &json!({"sy": 0})).is_err());
         assert!(app.s.execute("modify.transform", &json!({"a": 1, "b": 0, "c": 0, "d": 0, "e": 0, "f": 0})).is_err());
         assert_eq!(transform(&app), t);
+    }
+
+    /// #310, #371: a flipped symbol instance (a "sprite") keeps its flip with Properties
+    /// showing, closed and opened again, and one undo takes the flip back for good. In 0.2.1
+    /// the panel wrote Scale Y = 1 % back every frame, squashing it and undoing the undo.
+    #[test]
+    fn a_flipped_symbol_instance_survives_the_properties_panel_and_undoes() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 80}));
+        app.run("modify.convert_to_symbol", json!({"name": "Sprite"}));
+        frames(&ctx, &mut app);
+        let (t0, b0) = (transform(&app), app.s.selection_bounds());
+        app.run("modify.flip_h", json!({}));
+        frames(&ctx, &mut app);
+        let flipped = transform(&app);
+        assert!((flipped.determinant() + t0.determinant()).abs() < 1e-4, "mirrored, same size: {flipped:?}");
+        // Properties closed, the instance picked again, Properties opened: nothing changes.
+        app.toggle_panel(crate::dock::Panel::Properties);
+        frames(&ctx, &mut app);
+        app.run("edit.deselect", json!({}));
+        app.run("edit.select_all", json!({}));
+        app.toggle_panel(crate::dock::Panel::Properties);
+        frames(&ctx, &mut app);
+        frames(&ctx, &mut app);
+        assert_eq!(transform(&app), flipped, "showing the panel left the flip alone");
+        let b1 = app.s.selection_bounds();
+        assert!((b1.width() - b0.width()).abs() < 0.5 && (b1.height() - b0.height()).abs() < 0.5, "not squashed: {b0:?} vs {b1:?}");
+        // One undo, and it stays undone with the panel on screen.
+        app.run("edit.undo", json!({}));
+        frames(&ctx, &mut app);
+        assert_eq!(transform(&app), t0);
+        frames(&ctx, &mut app);
+        assert_eq!(transform(&app), t0, "the panel does not squash it again after the undo");
+    }
+
+    /// #393: the Stroke row has a checkbox like Fill, and the width stops at a hairline. A
+    /// stroke thinner than that (an import) is shown, never written back thicker.
+    #[test]
+    fn showing_a_stroke_thinner_than_a_hairline_leaves_it_alone() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 80, "stroke": "#000000", "stroke_width": 0.05, "object": true}));
+        let width = |app: &App| match app.s.visible_elements().first().map(|e| e.kind.clone()) {
+            Some(ElementKind::Shape(sh)) => sh.stroke.map(|s| s.width),
+            _ => None,
+        };
+        let state = app.s.state;
+        frames(&ctx, &mut app);
+        assert_eq!(width(&app), Some(0.05));
+        assert_eq!(app.s.state, state, "showing it is not an edit");
+        // The checkbox's command: off, and on again with the same stroke.
+        app.run("element.set_stroke", json!({"on": false}));
+        frames(&ctx, &mut app);
+        assert_eq!(width(&app), None);
+        app.run("element.set_stroke", json!({"on": true}));
+        frames(&ctx, &mut app);
+        assert_eq!(width(&app), Some(0.05));
     }
 
     /// #116: dragging the bottom edge of the transform box up past the top edge mirrors the

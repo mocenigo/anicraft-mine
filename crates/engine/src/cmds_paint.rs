@@ -157,6 +157,23 @@ fn bucket(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"element": id.0}))
 }
 
+/// Fills the empty area around `at` that the raw lines and fills of the active layer close off
+/// with `paint`, as the Paint Bucket does (behind the lines, joining fills of its colour).
+/// `false`: nothing closes it off.
+pub(crate) fn fill_enclosed(s: &mut Session, at: Vec2, paint: Paint) -> Result<bool> {
+    let Some(path) = crate::merge::enclosed_area(&s.visible_elements(), at) else { return Ok(false) };
+    let c = path.bounds().center();
+    let el = Element {
+        id: ElementId(s.doc.alloc_id()),
+        name: String::new(),
+        transform: Affine::translate(c.x, c.y),
+        color: ColorEffect::default(),
+        kind: ElementKind::Shape(Shape { fill: Some(paint), path: Arc::new(path.transformed(&Affine::translate(-c.x, -c.y))), stroke: None, fill_rule: FillRule::EvenOdd, merge: true, warp: None }),
+    };
+    crate::merge::merge_in_order(s, vec![el], crate::merge::Order::Behind)?;
+    Ok(true)
+}
+
 /// Grid over stage space: origin and cell size.
 struct Grid {
     origin: Vec2,

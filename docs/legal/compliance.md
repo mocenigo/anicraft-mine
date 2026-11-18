@@ -71,6 +71,13 @@ cargo deny check advisories              # RustSec security advisories (needs ne
   user's own files: AniCraft ships none in the binary; the sample plug-ins are source under
   `examples/plugins` (MIT OR Apache-2.0).
 
+### Pictures from the system clipboard (2026-11-17, ADR 0108)
+
+Paste reads a picture copied in another app through `arboard` (MIT OR Apache-2.0), with its
+`image-data` feature. eframe already depends on that crate with that feature for text, so it
+was in `Cargo.lock` and in the inventory; it is now also a direct dependency of the desktop
+app. No crate was added to the build, and the web build does not use it.
+
 ### Opening documents on macOS (2026-11-11, ADR 0062)
 
 New crate, from crates.io, macOS builds only: `fmv-macos-events` 0.1.0 (MIT OR Apache-2.0),
@@ -92,6 +99,13 @@ New crates, from crates.io: `pulldown-cmark` 0.13 (MIT) with `pulldown-cmark-esc
 off (no command-line binary). It turns the user guide's Markdown into the bundled HTML book. The
 guide's screenshots are original work (ATTRIBUTION.md). The guide names Adobe and Animate only
 nominatively, with the non-affiliation line on every page. No new licence.
+
+### Stroke outlines (2026-11-17, ADR 0110)
+
+New crates, from crates.io: `i_overlay` 9.2 (MIT OR Apache-2.0) with its `i_float`, `i_shape`,
+`i_tree` and `i_key_sort` (MIT), built with no default features (no rayon, no serde). They
+unite a stroke's outline on an integer grid so the renderers cover each pixel of it once. Pure
+Rust, no build script. No new licence.
 
 ### Find and Replace (2026-11-11, ADR 0058)
 

@@ -365,6 +365,24 @@ pub(crate) fn drop_selected(s: &mut Session) -> Result<Value> {
     Ok(json!({"dropped": n, "selected": s.selection.id_list()}))
 }
 
+/// The raw shapes `ids` of the active keyframe, left whole on top by a floating paste, go into
+/// the drawing where they lie.
+pub(crate) fn settle(s: &mut Session, ids: &[ElementId]) -> Result<()> {
+    let kf = s.editable_keyframe()?;
+    let mut floating = Vec::new();
+    kf.elements.retain(|e| {
+        let take = ids.contains(&e.id) && mergeable(e).is_some();
+        if take {
+            floating.push((**e).clone());
+        }
+        !take
+    });
+    if !floating.is_empty() {
+        merge_in(s, floating)?;
+    }
+    Ok(())
+}
+
 // ----- the Paint Bucket and imported drawings (ADR 0042) ---------------------------------------
 
 /// The probe's fill style: what is left of it after the merge is empty area.

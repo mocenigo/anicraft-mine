@@ -60,6 +60,8 @@ pub struct Cache {
     /// `(ready, needed)` visible tiles this frame.
     pub ready: (usize, usize),
     pub canvas: Rect,
+    /// The stage has been laid out once, so `canvas` is where it really was last frame.
+    laid_out: bool,
     pub service: Option<RenderService>,
     /// Document state of the picture on screen (an edit makes it differ).
     pub shown_state: Option<anicraft_engine::StateId>,
@@ -73,7 +75,7 @@ pub struct Cache {
 
 impl Default for Cache {
     fn default() -> Self {
-        Cache { tiles: Vec::new(), tick: 0, ms: 0.0, ready: (0, 0), canvas: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), service: None, shown_state: None, gpu: Default::default(), drawn_by: None, pattern: None }
+        Cache { tiles: Vec::new(), tick: 0, ms: 0.0, ready: (0, 0), canvas: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), laid_out: false, service: None, shown_state: None, gpu: Default::default(), drawn_by: None, pattern: None }
     }
 }
 
@@ -203,6 +205,9 @@ fn tiles_for(z: f32, stage_px: (u32, u32), px: [f32; 4], margin: u32, bg: Option
     out
 }
 
+/// Most selected elements whose own transformation points Free Transform marks (ADR 0109).
+const MAX_ORIGIN_MARKS: usize = 400;
+
 fn to_v(p: Pos2) -> Vec2 {
     Vec2::new(p.x, p.y)
 }
@@ -214,8 +219,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     crate::camera_tool::on_tool_change(app);
     crate::shape_envelope::settle(app);
     crate::camera_tool::tick(app, ui.ctx(), now);
-    app.stage_cache.canvas = canvas;
-    let resp = ui.allocate_rect(canvas, Sense::click_and_drag());
+    let canvas_was = std::mem::replace(&mut app.stage_cache.canvas, canvas);
+    let laid_out = std::mem::replace(&mut app.stage_cache.laid_out, true);
+    // While a colour picker popup is open the stage is its eyedropper (ADR 0109): a click
+    // picks the colour there instead of using the tool, so the tools get no presses.
+    let picker = crate::colour::picking(ui.ctx());
+    let resp = ui.allocate_rect(canvas, if picker.is_some() { Sense::hover() } else { Sense::click_and_drag() });
     // The drawing surface: Ctrl+F6 lands here, and screen readers hear the tool in hand.
     crate::a11y::anchor(ui, crate::a11y::Region::Stage, canvas, &resp);
     let ppp = ui.ctx().pixels_per_point();
@@ -228,6 +237,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.view.pan == egui::Vec2::ZERO
     {
         app.view.fit = true;
+    }
+    // Otherwise the artist chose this view, and a panel that grows or shrinks (the Timeline's
+    // top edge, a dock, the rulers, the window) only covers or reveals the stage: the artwork
+    // stays where it is on screen (#423). The pan is measured from the canvas centre, so it
+    // takes up the centre's move.
+    if laid_out && !app.view.fit && canvas_was != canvas && canvas_was.width() > 10.0 && canvas_was.height() > 10.0 {
+        app.view.pan += canvas_was.center() - canvas.center();
     }
     if app.view.fit && canvas.width() > 10.0 && canvas.height() > 10.0 {
         app.view.zoom = ((canvas.width() - 64.0) / size.x).min((canvas.height() - 64.0) / size.y).clamp(0.05, 64.0);
@@ -326,6 +342,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // Edit Multiple Frames takes the Selection and Free Transform tools' input (ADR 0047); Free
     // Transform's box then holds the selection on every keyframe (ADR 0051).
     let multi = crate::onion::editing(app) && !preview;
+    // Free Transform's box round the selection: one element's own box, turned as it is, and
+    // the transformation point (ADR 0111).
+    crate::xform::sync(app);
+    let xf_frame = if app.tool == Tool::Transform && !multi && !preview { crate::xform::frame(app) } else { None };
     let sel_bounds = if multi { crate::onion::selection_bounds(app) } else { bounds_arr(app.s.selection_bounds()) };
     let sel_rect = sel_bounds.map(|b| Rect::from_min_max(to_screen(Vec2::new(b[0], b[1])), to_screen(Vec2::new(b[2], b[3]))));
     // Shape hint markers take the pointer first with the selection tools (ADR 0023).
@@ -380,16 +400,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             Tool::Transform => {
                 let zone = match app.drag {
                     Drag::Transform { kind, .. } | Drag::MultiTransform { kind, .. } => Some(kind),
-                    _ => sel_rect.zip(pointer).and_then(|(r, p)| xf_zone(r, p)),
+                    _ if multi => sel_rect.zip(pointer).and_then(|(r, p)| xf_zone(r, p)),
+                    _ => xf_frame.zip(pointer).and_then(|(f, p)| f.zone(to_screen, p)),
                 };
+                // The arrows follow a turned box (ADR 0111).
+                let turned = if multi { None } else { app.xf.drag.filter(|_| matches!(app.drag, Drag::Transform { .. })).or(xf_frame) };
                 match zone {
+                    Some(kind) if turned.is_some_and(|f| f.m != Affine::IDENTITY || kind == XfKind::Pivot) => turned.map_or(CursorIcon::Default, |f| f.cursor(kind, to_screen, matches!(app.drag, Drag::Transform { .. }))),
+                    Some(XfKind::Pivot) => CursorIcon::Grab,
                     Some(XfKind::Scale { hx, hy }) if hx * hy > 0 => CursorIcon::ResizeNwSe,
                     Some(XfKind::Scale { hx, hy }) if hx * hy < 0 => CursorIcon::ResizeNeSw,
                     Some(XfKind::Scale { hx: 0, .. }) => CursorIcon::ResizeVertical,
                     Some(XfKind::Scale { .. }) => CursorIcon::ResizeHorizontal,
                     Some(XfKind::Skew { hy: 0, .. }) => CursorIcon::ResizeVertical,
                     Some(XfKind::Skew { .. }) => CursorIcon::ResizeHorizontal,
-                    Some(XfKind::Rotate) => CursorIcon::Alias,
+                    // No desktop has a rotate cursor: the app draws its own (#194).
+                    Some(XfKind::Rotate) => CursorIcon::None,
                     Some(XfKind::Move) => CursorIcon::Move,
                     None => CursorIcon::Default,
                 }
@@ -406,6 +432,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             _ => CursorIcon::Default,
         };
         ui.ctx().set_cursor_icon(icon);
+        // Free Transform outside a corner, and while turning: the curved arrow, bent around
+        // the box so it reads as "drag to rotate".
+        if icon == CursorIcon::None
+            && app.tool == Tool::Transform
+            && let Some(p) = pointer
+        {
+            let centre = sel_rect.map_or(canvas.center(), |r| r.center());
+            rotate_cursor(&ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("stage_cursor"))), p, p - centre);
+        }
+    }
+    if let Some(picker) = picker {
+        crate::erasertool::picker_dropper(app, ui, &resp, picker, pointer.map(|p| (p, to_v(to_stage(p)))), zoom);
     }
 
     if resp.clicked() || resp.drag_started() || resp.secondary_clicked() {
@@ -454,11 +492,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 Tool::Select if let Some(d) = crate::bone_tool::select_drag_start(app, xf, press) => d,
                 Tool::Select => select_press(app, sp, shift, command, alt, zoom),
                 Tool::Transform => {
-                    let zone = sel_rect.and_then(|r| xf_zone(r, press));
-                    match (zone, sel_bounds) {
-                        (Some(kind), Some(bounds)) => {
-                            app.s.begin_gesture(tr_noop!("Free Transform"));
-                            Drag::Transform { kind, start: sp, bounds, applied: Affine::IDENTITY }
+                    let zone = xf_frame.and_then(|f| f.zone(to_screen, press));
+                    match (zone, xf_frame) {
+                        (Some(kind), Some(frame)) => {
+                            // Moving an instance's transformation point changes the document;
+                            // a point held for the selection doesn't.
+                            if kind != XfKind::Pivot {
+                                app.s.begin_gesture(tr_noop!("Free Transform"));
+                            } else if frame.keeps {
+                                app.s.begin_gesture(tr_noop!("Move Transformation Point"));
+                            }
+                            app.xf.drag = Some(frame);
+                            Drag::Transform { kind, start: sp, bounds: frame.b, applied: Affine::IDENTITY }
                         }
                         // Not on the box: grab whatever is under the pointer and move it.
                         _ => match app.s.hit_test(to_v(sp), 3.0 / zoom) {
@@ -467,6 +512,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 match bounds_arr(app.s.selection_bounds()) {
                                     Some(bounds) => {
                                         app.s.begin_gesture(tr_noop!("Free Transform"));
+                                        app.xf.drag = Some(crate::xform::Frame::upright(bounds));
                                         Drag::Transform { kind: XfKind::Move, start: sp, bounds, applied: Affine::IDENTITY }
                                     }
                                     None => Drag::None,
@@ -584,18 +630,37 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             }
+            (Drag::Transform { kind: XfKind::Pivot, .. }, Some(c)) => {
+                // The transformation point follows the pointer, snapping to the box's handles
+                // and centre (Alt: freely); it may leave the box (ADR 0111).
+                app.snap_ring = None;
+                crate::xform::drag_point(app, to_v(c), zoom, alt);
+            }
             (Drag::Transform { kind, start, bounds, applied }, Some(c)) => {
+                let (kind, start, bounds, applied) = (*kind, *start, *bounds, *applied);
+                // The box as it was when the drag began: its handles act along its own axes,
+                // and it turns about its transformation point (ADR 0111).
+                let frame = app.xf.drag.unwrap_or_else(|| crate::xform::Frame::upright(bounds));
                 // The handle being dragged (or the box, moving) snaps; Shift constrains instead.
-                let c = if shift { c } else { xf_snap(&mut app.s, &mut app.snap_ring, *kind, *bounds, *start, c, zoom) };
-                let total = xf_total(*kind, *bounds, *start, c, shift, alt);
+                let c = if shift { c } else { xf_snap(&mut app.s, &mut app.snap_ring, kind, &frame, start, c, zoom) };
+                let total = frame.total(kind, start, c, shift, alt);
                 // Send only the change since the last frame; the gesture makes it one undo step.
                 if let Some(inv) = applied.inverse() {
                     let delta = total.mul(&inv);
                     if delta.m.iter().zip(Affine::IDENTITY.m).any(|(a, b)| (a - b).abs() > 1e-6) {
                         let [a, b, cc, d, e, f] = delta.m;
-                        let ok = app.s.execute("modify.transform", &json!({"a": a, "b": b, "c": cc, "d": d, "e": e, "f": f})).is_ok();
-                        if ok {
-                            *applied = total;
+                        let mut p = json!({"a": a, "b": b, "c": cc, "d": d, "e": e, "f": f});
+                        // Turning, scaling and skewing follow the transformation origin (ADR
+                        // 0109): each object about its own point. A move is the same for all.
+                        if kind != XfKind::Move {
+                            p["origin"] = json!(app.s.style.transform_origin.key());
+                        }
+                        if app.s.execute("modify.transform", &p).is_ok() {
+                            // A point held for the selection goes with the artwork.
+                            crate::xform::carried(app, &delta);
+                            if let Drag::Transform { applied, .. } = &mut app.drag {
+                                *applied = total;
+                            }
                         }
                     }
                 }
@@ -823,6 +888,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 None => {}
             }
         }
+    }
+    // Double-clicking the transformation point puts it back at the centre (ADR 0111).
+    if app.tool == Tool::Transform
+        && !preview
+        && !multi
+        && resp.double_clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::xform::double_click(app, to_screen, p);
     }
     if app.tool == Tool::Subselect
         && !preview
@@ -1114,7 +1188,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let mut dots = egui::Mesh::default();
         let mut budget = MAX_DOTS;
         let dl = app.s.display_list();
-        let mut occluders = Occluders::new(&dl.items, &to_px, canvas, gap);
+        let mut occluders = Occluders::of(&dl, &to_px, canvas, gap);
 
         for (index, item) in dl.items.iter().enumerate().filter(|(_, i)|
             app.s.selection.contains(i.layer, i.element)
@@ -1231,7 +1305,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         if transforming {
             // Free transform shows one box for the whole selection (below); members get a hint.
-            painter.rect_stroke(r, 0.0, Stroke::new(1.0, T.selection.gamma_multiply(0.45)), StrokeKind::Middle);
+            // (One element alone shows its own box, turned with it: no upright one beside it.)
+            if multi || app.s.selection.len() > 1 {
+                painter.rect_stroke(r, 0.0, Stroke::new(1.0, T.selection.gamma_multiply(0.45)), StrokeKind::Middle);
+            }
             continue;
         }
         // A plain box, as Animate's Selection tool shows: handles are Free Transform's (Q),
@@ -1253,20 +1330,29 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         painter.circle(o, 3.5, Color32::WHITE, Stroke::new(1.0, Color32::BLACK));
     }
     // Free transform box: recomputed every frame so it follows the artwork while you drag.
-    let xf_box = if multi { crate::onion::selection_bounds(app) } else { bounds_arr(app.s.selection_bounds()) };
-    if transforming && !enveloped && let Some(b) = xf_box {
-        let r = Rect::from_min_max(to_screen(Vec2::new(b[0], b[1])), to_screen(Vec2::new(b[2], b[3]))).expand(1.0);
-        painter.rect_stroke(r, 0.0, Stroke::new(1.5, T.selection), StrokeKind::Middle);
-        for (h, _, _) in handles(r) {
-            let hr = Rect::from_center_size(h, vec2(HANDLE, HANDLE));
+    // One element shows its own box, turned, scaled and skewed as it is (ADR 0111, #175);
+    // several, or Edit Multiple Frames' selection, the upright box round them all.
+    let xf_box = if multi { crate::onion::selection_bounds(app).map(crate::xform::Frame::upright) } else if preview { None } else { crate::xform::frame(app) };
+    if transforming && !enveloped && let Some(frame) = xf_box {
+        let corners: Vec<Pos2> = frame.corners().into_iter().map(to_screen).collect();
+        painter.add(egui::Shape::closed_line(corners, Stroke::new(1.5, T.selection)));
+        for (hx, hy) in crate::xform::HANDLES {
+            let hr = Rect::from_center_size(to_screen(frame.handle(hx, hy)), vec2(HANDLE, HANDLE));
             painter.rect_filled(hr, 0.0, Color32::WHITE);
             painter.rect_stroke(hr, 0.0, Stroke::new(1.0, T.selection), StrokeKind::Middle);
         }
-        // transformation point (centre)
-        let c = r.center();
-        painter.circle(c, 4.0, Color32::WHITE, Stroke::new(1.0, T.selection));
-        painter.line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], Stroke::new(1.0, T.selection));
-        painter.line_segment([c - vec2(0.0, 6.0), c + vec2(0.0, 6.0)], Stroke::new(1.0, T.selection));
+        // The transformation point (ADR 0111): the instance's own, the one held for the
+        // selection, or the box's centre; or, when each object is transformed about its own
+        // point (ADR 0109), every object's (past a few hundred objects the box alone shows,
+        // so a huge selection stays quick).
+        let mode = app.s.style.transform_origin;
+        let own = !multi && mode != anicraft_engine::TransformOrigin::Selection && app.s.selection.len() <= MAX_ORIGIN_MARKS;
+        let points: Vec<Pos2> = if own { anicraft_engine::transform_origins(&app.s, mode).into_iter().map(|(_, at)| to_screen(at)).collect() } else { vec![to_screen(frame.point)] };
+        for c in points {
+            painter.circle(c, 4.0, Color32::WHITE, Stroke::new(1.0, T.selection));
+            painter.line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], Stroke::new(1.0, T.selection));
+            painter.line_segment([c - vec2(0.0, 6.0), c + vec2(0.0, 6.0)], Stroke::new(1.0, T.selection));
+        }
     }
     crate::pathtools::draw_overlay(app, &painter, xf, pointer.filter(|p| canvas.contains(*p)));
     crate::widthtool::draw_overlay(app, &painter, xf, pointer.filter(|p| canvas.contains(*p)));
@@ -1430,20 +1516,20 @@ fn snap_move(app: &mut App, c: Pos2, zoom: f32, shift: bool) {
 /// handle, or while moving the box's corner or centre nearest where it was pressed) lands where
 /// the snap engine puts it: an object's point or line, a guide, the grid or a pixel. The
 /// selection itself is no target. Rotation doesn't snap.
-fn xf_snap(s: &mut anicraft_engine::Session, ring: &mut Option<Vec2>, kind: XfKind, b: [f32; 4], start: Pos2, c: Pos2, zoom: f32) -> Pos2 {
-    let side = |h: i8, lo: f32, hi: f32| match h {
-        ..0 => lo,
-        0 => (lo + hi) * 0.5,
-        _ => hi,
+fn xf_snap(s: &mut anicraft_engine::Session, ring: &mut Option<Vec2>, kind: XfKind, frame: &crate::xform::Frame, start: Pos2, c: Pos2, zoom: f32) -> Pos2 {
+    // Where a handle of the box is on the stage (the box may be turned, ADR 0111).
+    let at = |hx: i8, hy: i8| {
+        let p = frame.handle(hx, hy);
+        pos2(p.x, p.y)
     };
     let handle = match kind {
-        XfKind::Scale { hx, hy } => pos2(side(hx, b[0], b[2]), side(hy, b[1], b[3])),
+        XfKind::Scale { hx, hy } => at(hx, hy),
         XfKind::Move => {
-            let pts = [pos2(b[0], b[1]), pos2(b[2], b[1]), pos2(b[2], b[3]), pos2(b[0], b[3]), pos2((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5)];
+            let pts = [at(-1, -1), at(1, -1), at(1, 1), at(-1, 1), at(0, 0)];
             pts.into_iter().min_by(|p, q| p.distance(start).total_cmp(&q.distance(start))).unwrap_or(start)
         }
-        // Rotation and skew don't snap.
-        XfKind::Rotate | XfKind::Skew { .. } => {
+        // Rotation and skew don't snap (the transformation point snaps to its own box).
+        XfKind::Rotate | XfKind::Skew { .. } | XfKind::Pivot => {
             *ring = None;
             return c;
         }
@@ -2165,12 +2251,23 @@ struct Occluder {
     bounds: Rect,
     fill: bool,
     stroke: bool,
+    /// The mask it shows through, if it is on a masked layer: it hides only what the mask
+    /// reveals of it.
+    clip: Option<u32>,
     /// The fill's and the stroke's outlines in screen space, built on first use.
     lines: Option<[Vec<anicraft_engine::geom::Polyline>; 2]>,
 }
 
+/// A mask's shapes in screen space, each with its fill rule; `None` when the mask hides
+/// nothing reliably here (a soft mask, or one with no shapes).
+type MaskOutlines = Option<Vec<(Vec<anicraft_engine::geom::Polyline>, anicraft_engine::geom::FillRule)>>;
+
 /// The artwork that hides selection stipple: opaque fills and strokes later in drawing order,
-/// including on other layers. Translucent, bitmap, clipped and fading artwork hides nothing.
+/// including on other layers. Translucent, bitmap and fading artwork hides nothing (a symbol
+/// instance below full opacity is a group, so what is in it hides nothing either). Artwork on
+/// a masked layer hides the stipple only where its mask shows it (after outside PR #404's
+/// follow-up by Untoldent, done here on the row spans the pass already works in: no path
+/// booleans, and a mask's outline is built once a frame however many shapes it covers).
 ///
 /// A frame asks once per selected fill, stroke and backing, so the work is shared: each item's
 /// bounds are found once, an item is only looked at where its bounds meet the selected spans,
@@ -2178,6 +2275,9 @@ struct Occluder {
 /// drawing of 720 pieces took 600 ms a frame when every piece outlined everything above it).
 struct Occluders<'a> {
     items: &'a [anicraft_engine::doc::DisplayItem],
+    /// The whole list, for its masks; without it masked artwork hides nothing.
+    dl: Option<&'a anicraft_engine::doc::DisplayList>,
+    masks: std::collections::HashMap<u32, MaskOutlines>,
     to_px: Affine,
     clip: Rect,
     gap: f32,
@@ -2189,13 +2289,18 @@ struct Occluders<'a> {
 
 impl<'a> Occluders<'a> {
     fn new(items: &'a [anicraft_engine::doc::DisplayItem], to_px: &Affine, clip: Rect, gap: f32) -> Self {
-        Self { items, to_px: *to_px, clip, gap, known: Vec::new(), built: 0, batch: Vec::new() }
+        Self { items, dl: None, masks: Default::default(), to_px: *to_px, clip, gap, known: Vec::new(), built: 0, batch: Vec::new() }
     }
 
-    /// What `item` hides, if anything.
-    fn occluder(item: &anicraft_engine::doc::DisplayItem, to_px: &Affine) -> Option<Occluder> {
+    /// For a frame's display list: masked artwork hides what its mask shows of it.
+    fn of(dl: &'a anicraft_engine::doc::DisplayList, to_px: &Affine, clip: Rect, gap: f32) -> Self {
+        Self { dl: Some(dl), ..Self::new(&dl.items, to_px, clip, gap) }
+    }
+
+    /// What `item` hides, if anything. `masked`: artwork under a mask counts.
+    fn occluder(item: &anicraft_engine::doc::DisplayItem, to_px: &Affine, masked: bool) -> Option<Occluder> {
         use anicraft_engine::doc::Paint;
-        if item.guide || item.masks.is_some() || item.outline.is_some() || item.clip.is_some() || item.group.is_some() {
+        if item.guide || item.masks.is_some() || item.outline.is_some() || (item.clip.is_some() && !masked) || item.group.is_some() {
             return None;
         }
         let solid = |c: anicraft_engine::doc::Rgba| item.color.apply(c).a >= 0.999;
@@ -2214,16 +2319,41 @@ impl<'a> Occluders<'a> {
         let reach = item.stroke.as_ref().filter(|_| stroke).map_or(0.0, |s| s.reach() * m.mean_scale());
         let b = item.path.bounds().transformed(&m).inflate(reach + 1.0);
         let bounds = Rect::from_min_max(pos2(b.min.x, b.min.y), pos2(b.max.x, b.max.y));
-        (bounds.is_finite() && bounds.is_positive()).then_some(Occluder { bounds, fill, stroke, lines: None })
+        (bounds.is_finite() && bounds.is_positive()).then_some(Occluder { bounds, fill, stroke, clip: item.clip, lines: None })
+    }
+
+    /// The masks `clip` shows through, innermost first, each as its shapes' outlines. `None`
+    /// when one of them is soft or empty, or the chain is broken: then nothing is hidden.
+    fn mask_chain(dl: &anicraft_engine::doc::DisplayList, masks: &mut std::collections::HashMap<u32, MaskOutlines>, to_px: &Affine, clip: u32, built: &mut usize) -> Option<Vec<u32>> {
+        let mut chain = Vec::new();
+        let mut id = clip;
+        for _ in 0..=dl.clip_parents.len() {
+            let known = masks.entry(id).or_insert_with(|| {
+                if dl.clip_mode(id).is_soft() || *built >= MAX_OCCLUDERS {
+                    return None;
+                }
+                *built += 1;
+                let shapes: Vec<_> = dl.items.iter().filter(|i| i.masks == Some(id) && i.fill.is_some()).map(|i| (i.path.flatten(&to_px.mul(&i.transform), 0.5), i.fill_rule)).collect();
+                (!shapes.is_empty()).then_some(shapes)
+            });
+            known.as_ref()?;
+            chain.push(id);
+            match dl.clip_parents.get(id as usize).copied()? {
+                Some(parent) if parent < id => id = parent,
+                Some(_) => return None,
+                None => return Some(chain),
+            }
+        }
+        None
     }
 
     /// Takes what the items from `from` on cover out of `spans`.
     fn exclude(&mut self, spans: &mut Vec<Rect>, from: usize) {
         use anicraft_engine::geom::FillRule;
         let Some(area) = spans.iter().copied().reduce(|a, b| a.union(b)) else { return };
-        let Self { items, to_px, clip, gap, known, built, batch } = self;
+        let Self { items, dl, masks, to_px, clip, gap, known, built, batch } = self;
         if known.is_empty() {
-            known.extend(items.iter().map(|i| Self::occluder(i, to_px)));
+            known.extend(items.iter().map(|i| Self::occluder(i, to_px, dl.is_some())));
         }
         // Only the rows and columns the spans are in need scanning.
         let clip = clip.intersect(area.expand(1.0));
@@ -2246,12 +2376,28 @@ impl<'a> Occluders<'a> {
                 o.lines = Some([fill, stroke]);
             }
             let Some([fill, stroke]) = &o.lines else { continue };
+            // Under a mask: the spans the mask does not show stay as they are, and only the
+            // rest goes behind the artwork. Each mask in the chain takes its share out.
+            let mut outside: Vec<Rect> = Vec::new();
+            if let Some(c) = o.clip {
+                let Some(chain) = dl.and_then(|dl| Self::mask_chain(dl, masks, to_px, c, built)) else { continue };
+                for id in chain {
+                    let Some(Some(shapes)) = masks.get(&id) else { continue };
+                    let mut hidden = spans.clone();
+                    for (lines, rule) in shapes {
+                        subtract_occlusion_spans(&mut hidden, lines, *rule, clip, batch, *gap);
+                    }
+                    subtract_spans(spans, &hidden);
+                    outside.append(&mut hidden);
+                }
+            }
             if !fill.is_empty() {
                 subtract_occlusion_spans(spans, fill, item.fill_rule, clip, batch, *gap);
             }
             if !stroke.is_empty() {
                 subtract_occlusion_spans(spans, stroke, FillRule::NonZero, clip, batch, *gap);
             }
+            spans.append(&mut outside);
         }
     }
 }
@@ -4135,11 +4281,36 @@ fn rt_size(te: &crate::app::TextEditing) -> f32 {
 
 // ----- free transform ---------------------------------------------------------------------------
 
+/// The rotate cursor at `at`: an arc with an arrowhead at each end, curving around the box whose
+/// centre lies against `outward`. Dark with a light edge, so it shows on any artwork.
+fn rotate_cursor(painter: &egui::Painter, at: Pos2, outward: egui::Vec2) {
+    const R: f32 = 9.0;
+    const SWEEP: f32 = 1.05;
+    let dir = if outward.length() > 1e-3 { outward.normalized() } else { vec2(std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2) };
+    let mid = dir.y.atan2(dir.x);
+    // The arc's circle sits towards the box, so the arc passes through the pointer.
+    let c = at - dir * R;
+    let on = |a: f32| c + vec2(a.cos(), a.sin()) * R;
+    let arc: Vec<Pos2> = (0..=12).map(|i| on(mid - SWEEP + 2.0 * SWEEP * i as f32 / 12.0)).collect();
+    // An arrowhead at each end, pointing on along the circle.
+    let head = |a: f32, sign: f32| {
+        let tip = on(a + sign * 0.38);
+        let (radial, back) = (vec2(a.cos(), a.sin()), on(a));
+        vec![tip, back + radial * 4.0, back - radial * 4.0]
+    };
+    for (width, colour) in [(4.0, Color32::WHITE), (1.6, Color32::BLACK)] {
+        painter.add(egui::Shape::line(arc.clone(), Stroke::new(width, colour)));
+    }
+    for (a, sign) in [(mid - SWEEP, -1.0), (mid + SWEEP, 1.0)] {
+        painter.add(egui::Shape::convex_polygon(head(a, sign), Color32::BLACK, Stroke::new(1.0, Color32::WHITE)));
+    }
+}
+
 /// Screen-space handle size and the rotation zone just outside each corner.
-const HANDLE: f32 = 8.0;
-const ROTATE_ZONE: f32 = 22.0;
+pub(crate) const HANDLE: f32 = 8.0;
+pub(crate) const ROTATE_ZONE: f32 = 22.0;
 /// How far from a box edge line (screen space) a press still grabs it to skew.
-const SKEW_ZONE: f32 = 5.0;
+pub(crate) const SKEW_ZONE: f32 = 5.0;
 
 fn bounds_arr(b: anicraft_engine::geom::Rect) -> Option<[f32; 4]> {
     (!b.is_empty()).then_some([b.min.x, b.min.y, b.max.x, b.max.y])
@@ -4179,10 +4350,18 @@ fn xf_zone(r: Rect, p: Pos2) -> Option<XfKind> {
 
 /// The whole transform of a free-transform drag from `start` to `cur` (stage space).
 pub(crate) fn xf_total(kind: XfKind, b: [f32; 4], start: Pos2, cur: Pos2, shift: bool, alt: bool) -> Affine {
+    xf_total_about(kind, b, None, start, cur, shift, alt)
+}
+
+/// [`xf_total`] with the transformation point `about` (default: the box's centre): what a
+/// rotation turns about, and what Alt scales and skews about (ADR 0111).
+pub(crate) fn xf_total_about(kind: XfKind, b: [f32; 4], about: Option<Pos2>, start: Pos2, cur: Pos2, shift: bool, alt: bool) -> Affine {
     let [x0, y0, x1, y1] = b;
-    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (cx, cy) = about.map_or(((x0 + x1) / 2.0, (y0 + y1) / 2.0), |p| (p.x, p.y));
     let about = |px: f32, py: f32, m: Affine| Affine::translate(px, py).mul(&m).mul(&Affine::translate(-px, -py));
     match kind {
+        // Moving the transformation point transforms nothing.
+        XfKind::Pivot => Affine::IDENTITY,
         XfKind::Move => {
             let mut d = cur - start;
             if shift {
@@ -4604,6 +4783,53 @@ mod occluder_tests {
         assert_eq!(spans, square(0.0));
     }
 
+    /// Artwork on a masked layer hides the stipple under it only where its mask shows it
+    /// (the idea of outside PR #404's follow-up); under a soft mask it hides nothing, since
+    /// how much shows there is not a yes or no.
+    #[test]
+    fn masked_artwork_hides_only_what_its_mask_shows() {
+        let scene = |mask_mode: Option<&str>| {
+            let mut s = anicraft_engine::Session::new(anicraft_engine::doc::Document::default());
+            let run = |s: &mut anicraft_engine::Session, id: &str, p: serde_json::Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id}: {e}"));
+            let rect = |x: i32, w: i32, fill: &str| json!({"x": x, "y": 0, "w": w, "h": 100, "fill": fill, "stroke": null, "object": true});
+            // Below: what is selected. Above it: an opaque square, seen through a mask that
+            // shows its left half.
+            run(&mut s, "draw.rect", rect(0, 100, "#00ff00"));
+            let art = run(&mut s, "layer.new", json!({}))["layer"].as_u64().unwrap_or(0);
+            run(&mut s, "draw.rect", rect(0, 100, "#ff0000"));
+            let mask = run(&mut s, "layer.new", json!({}))["layer"].as_u64().unwrap_or(0);
+            run(&mut s, "draw.rect", rect(0, 50, "#000000"));
+            let mut props = json!({"layer": mask, "type": "mask"});
+            if let Some(mode) = mask_mode {
+                props["mask"] = json!(mode);
+            }
+            run(&mut s, "layer.set_properties", props);
+            run(&mut s, "layer.set_properties", json!({"layer": art, "type": "masked"}));
+            s.display_list()
+        };
+        let clip = Rect::from_min_max(pos2(-100.0, -100.0), pos2(1000.0, 1000.0));
+        let square = vec![Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 100.0))];
+        let area = |spans: &[Rect]| spans.iter().map(|r| r.area()).sum::<f32>();
+        let dl = scene(None);
+        assert!(dl.items.iter().any(|i| i.clip.is_some()) && dl.items.iter().any(|i| i.masks.is_some()), "a masked item and its mask");
+        let mut occluders = Occluders::of(&dl, &Affine::IDENTITY, clip, GAP);
+        for _ in 0..3 {
+            let mut spans = square.clone();
+            occluders.exclude(&mut spans, 1);
+            assert!((area(&spans) - 5000.0).abs() < 150.0, "the half the mask shows is hidden: {}", area(&spans));
+            assert!(spans.iter().all(|r| r.left() >= 49.0), "and it is the left half: {spans:?}");
+        }
+        assert_eq!(occluders.built, 2, "the mask and the square, each outlined once");
+        // Without the list's masks (or under a soft mask) masked artwork hides nothing.
+        let mut spans = square.clone();
+        Occluders::new(&dl.items, &Affine::IDENTITY, clip, GAP).exclude(&mut spans, 1);
+        assert_eq!(spans, square);
+        let soft = scene(Some("alpha"));
+        let mut spans = square.clone();
+        Occluders::of(&soft, &Affine::IDENTITY, clip, GAP).exclude(&mut spans, 1);
+        assert!((area(&spans) - 10_000.0).abs() < 1.0, "{}", area(&spans));
+    }
+
     #[test]
     #[ignore = "a measurement, not a check"]
     fn selection_overlay_cost() {
@@ -4632,5 +4858,120 @@ mod occluder_tests {
         let pieces = app.s.selection.len();
         let selected = frames(&mut app);
         println!("{pieces} raw pieces: {idle:.2} ms a frame unselected, {selected:.2} ms selected");
+        // The same drawing under an opaque sheet seen through a mask of 48 shapes.
+        app.run("edit.deselect", json!({}));
+        let art = app.run("layer.new", json!({})).and_then(|v| v["layer"].as_u64()).unwrap_or(0);
+        app.run("draw.rect", json!({"x": 0, "y": 0, "w": 520, "h": 400, "fill": "#ffcc00", "stroke": null, "object": true}));
+        let mask = app.run("layer.new", json!({})).and_then(|v| v["layer"].as_u64()).unwrap_or(0);
+        for i in 0..48 {
+            app.run("draw.oval", json!({"x": 10 + (i % 8) * 60, "y": 10 + (i / 8) * 60, "w": 50, "h": 50, "fill": "#000000", "stroke": null, "object": true}));
+        }
+        app.run("layer.set_properties", json!({"layer": mask, "type": "mask"}));
+        app.run("layer.set_properties", json!({"layer": art, "type": "masked"}));
+        app.run("edit.deselect", json!({}));
+        let idle = frames(&mut app);
+        let first = app.s.timeline().layers.last().map(|l| l.id.0).unwrap_or(0);
+        app.run("layer.select", json!({"layer": first}));
+        app.run("edit.select_all", json!({}));
+        let selected = frames(&mut app);
+        println!("under a masked sheet ({} selected): {idle:.2} ms a frame unselected, {selected:.2} ms selected", app.s.selection.len());
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+    use egui::{Event, PointerButton};
+
+    fn run_frame(ctx: &egui::Context, app: &mut App, time: f64, events: Vec<Event>) {
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), time: Some(time), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> Event {
+        Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE }
+    }
+
+    /// A raw rectangle with an outline, nothing selected, the Selection tool; where the stage
+    /// point `(x, y)` is on screen.
+    fn scene() -> (App, egui::Context, impl Fn(f32, f32) -> Pos2) {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::new(anicraft_engine::doc::Document::default()), Some(std::path::PathBuf::from("unused.png")));
+        app.tool = Tool::Select;
+        app.s.style.object_drawing = false;
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 120, "fill": "#ff0000", "stroke": "#000000", "stroke_width": 3}));
+        app.run("edit.deselect", json!({}));
+        for i in 0..3 {
+            run_frame(&ctx, &mut app, i as f64 * 0.1, Vec::new());
+        }
+        let size = vec2(app.s.doc.stage.width as f32, app.s.doc.stage.height as f32);
+        let origin = app.stage_cache.canvas.center() + app.view.pan - size * app.view.zoom * 0.5;
+        let zoom = app.view.zoom;
+        (app, ctx, move |x, y| origin + vec2(x, y) * zoom)
+    }
+
+    /// #194: with Free Transform, just outside a corner of the box the pointer is the app's own
+    /// rotate cursor (the system one is hidden and a curved arrow is drawn), not the shortcut
+    /// arrow that hid the rotate zone; on the corner it is the scale cursor.
+    #[test]
+    fn free_transform_shows_a_rotate_cursor_outside_the_corners() {
+        let (mut app, ctx, at) = scene();
+        app.tool = Tool::Transform;
+        app.run("edit.select_all", json!({}));
+        let hover = |app: &mut App, p: Pos2, t: f64| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), time: Some(t), events: vec![Event::PointerMoved(p)], ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+            out.textures_delta.clear();
+            let drawn = out.shapes.iter().filter(|s| s.clip_rect.contains(p) && matches!(&s.shape, egui::Shape::Path(path) if path.closed && path.points.len() == 3 && path.points.iter().all(|q| q.distance(p) < 20.0))).count();
+            (out.platform_output.cursor_icon, drawn)
+        };
+        let b = app.s.selection_bounds();
+        let corner = at(b.max.x, b.max.y);
+        hover(&mut app, corner, 1.0);
+        assert_eq!(hover(&mut app, corner, 1.1).0, CursorIcon::ResizeNwSe, "on the corner handle: scale");
+        let (icon, arrowheads) = hover(&mut app, corner + vec2(13.0, 13.0), 1.2);
+        assert_eq!(icon, CursorIcon::None, "outside the corner: the app's rotate cursor");
+        assert_eq!(arrowheads, 2, "the curved arrow is drawn at the pointer");
+        let (icon, arrowheads) = hover(&mut app, corner - vec2(40.0, 30.0), 1.3);
+        assert_eq!((icon, arrowheads), (CursorIcon::Move, 0), "inside the box: move");
+    }
+
+    /// A double-click: press, release, `gap` seconds, press, release (each its own frame).
+    fn double_click(gap: f64) -> App {
+        let (mut app, ctx, at) = scene();
+        let p = at(200.0, 160.0);
+        let mut t = 1.0;
+        run_frame(&ctx, &mut app, t, vec![Event::PointerMoved(p)]);
+        for click in 0..2 {
+            t += 0.01;
+            run_frame(&ctx, &mut app, t, vec![button(p, true)]);
+            t += 0.04;
+            run_frame(&ctx, &mut app, t, vec![button(p, false)]);
+            if click == 0 {
+                t += gap;
+                run_frame(&ctx, &mut app, t, vec![Event::PointerMoved(p)]);
+            }
+        }
+        for _ in 0..3 {
+            t += 0.02;
+            run_frame(&ctx, &mut app, t, Vec::new());
+        }
+        app
+    }
+
+    /// #192: a double-click on a raw fill selects it with its outline, at any speed a desktop
+    /// counts as a double-click. egui's own limit is 0.3 s between the clicks, which a relaxed
+    /// double-click misses (and a slow frame after the first click used up), so "sometimes it
+    /// took six clicks"; the app now allows the half second Windows and macOS do.
+    #[test]
+    fn a_double_click_on_a_raw_fill_selects_its_outline_fast_or_relaxed() {
+        for gap in [0.02, 0.1, 0.25, 0.4] {
+            let app = double_click(gap);
+            assert_eq!(app.s.selection.len(), 5, "{gap} s apart: the fill and its four sides");
+            assert_eq!(app.s.visible_elements().len(), 5, "nothing moved or merged");
+        }
+        // Two separate clicks stay two clicks: the fill alone.
+        assert_eq!(double_click(0.7).s.selection.len(), 1);
     }
 }

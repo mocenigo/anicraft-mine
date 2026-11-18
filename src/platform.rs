@@ -1062,6 +1062,85 @@ pub fn set_unsaved(unsaved: bool) {
     crate::web::set_unsaved(unsaved);
 }
 
+/// A picture on the system clipboard, as other apps copy one: 8-bit RGBA rows, top first.
+pub struct ClipboardImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// The longest side of a pasted picture, in pixels (a guard against a broken clipboard).
+const CLIPBOARD_IMAGE_SIDE: u32 = 16_384;
+
+/// The picture the system clipboard holds, if it holds one (a screenshot, or pixels copied in a
+/// paint program). `None` in a browser, where the page cannot read the clipboard unasked.
+pub fn clipboard_image() -> Option<ClipboardImage> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let image = arboard::Clipboard::new().ok()?.get_image().ok()?;
+        let (width, height) = (u32::try_from(image.width).ok()?, u32::try_from(image.height).ok()?);
+        let bytes = usize::try_from(u64::from(width) * u64::from(height) * 4).ok()?;
+        (width > 0 && height > 0 && width <= CLIPBOARD_IMAGE_SIDE && height <= CLIPBOARD_IMAGE_SIDE && image.bytes.len() == bytes).then(|| ClipboardImage { width, height, rgba: image.bytes.into_owned() })
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+/// The text the system clipboard holds, if it holds text.
+pub fn clipboard_text() -> Option<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        arboard::Clipboard::new().ok()?.get_text().ok()
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+/// Ctrl/⌘+V that the desktop layer swallowed. egui-winit turns that key into a paste event
+/// only when the clipboard holds text; with a picture on it nothing arrives at all, except the
+/// key's release. So: a release of V that had no press and no paste event before it, with
+/// Ctrl/⌘ held then or a moment ago, was a paste the app never heard of (#263).
+#[derive(Default)]
+pub struct SwallowedPaste {
+    /// A press of V or a paste event came since V was last released.
+    heard: bool,
+    /// When Ctrl/⌘ was last seen held.
+    command_at: Option<f64>,
+}
+
+impl SwallowedPaste {
+    /// Feeds one frame's input; `true` when it held such a paste.
+    pub fn frame(&mut self, input: &egui::InputState) -> bool {
+        if input.modifiers.command {
+            self.command_at = Some(input.time);
+        }
+        let mut swallowed = false;
+        for event in &input.events {
+            match event {
+                egui::Event::Paste(_) | egui::Event::Key { key: egui::Key::V, pressed: true, .. } => self.heard = true,
+                egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. } => {
+                    let command = modifiers.command || self.command_at.is_some_and(|t| input.time - t < 0.5);
+                    swallowed |= !self.heard && command;
+                    self.heard = false;
+                }
+                _ => {}
+            }
+        }
+        swallowed
+    }
+}
+
+/// The longest pause between the two clicks of a double-click, in seconds: the half second
+/// Windows and macOS use unless the user changed it. egui's default (0.3 s) is shorter than what
+/// the desktop itself accepts, so a relaxed double-click on the stage or the timeline counted as
+/// two clicks (#192).
+pub const DOUBLE_CLICK_SECONDS: f64 = 0.5;
+
+/// How the pointer feels in this app, the same as in the desktop around it.
+pub fn pointer_feel(ctx: &egui::Context) {
+    ctx.options_mut(|o| o.input_options.max_double_click_delay = DOUBLE_CLICK_SECONDS);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

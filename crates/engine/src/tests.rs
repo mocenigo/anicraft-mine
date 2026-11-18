@@ -745,6 +745,19 @@ there", "runs": [{"chars": 1, "bold": true, "shift": "superscript", "color": "#f
         json!({"appimage": "/no/such/AniCraft.AppImage", "data_home": "/usr/share", "refresh": "x"}),
         json!({"appimage": "/a
 Exec=evil", "data_home": "relative/share", "refresh": false}),
+        // Modify › Shape (ADR 0109): distances and steps at and past the limits, on whatever is
+        // selected, and samples far from the stage.
+        json!({"distance": 1000, "steps": 50, "direction": "inset", "id": 2}),
+        json!({"distance": 400, "steps": 6, "direction": "inset"}),
+        json!({"distance": 1000, "steps": 3}),
+        json!({"distance": 0.0001, "steps": 1, "direction": "expand"}),
+        json!({"distance": 37.5, "direction": "inset", "id": 3}),
+        json!({"distance": 1e30, "steps": u64::MAX, "direction": 7}),
+        json!({"distance": f64::NAN, "steps": -3, "direction": "sideways", "id": "x"}),
+        json!({"x": 1e7, "y": -1e7, "scale": 64, "origin": "center"}),
+        json!({"x": 12.5, "y": 40, "scale": 0.01, "origin": "registration", "a": 2, "b": 0, "c": 0, "d": 0.5, "e": 1e30, "f": 0}),
+        json!({"a": 0.3, "b": 1, "c": -1, "d": 0.3, "e": 5, "f": 5, "origin": "nowhere", "mode": "center"}),
+        json!({"mode": 9, "origin": 4}),
     ];
     // File commands are exercised separately (they touch the disk).
     let skip = |id: &str| id.starts_with("file.");

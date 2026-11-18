@@ -974,7 +974,7 @@ mod tests {
         use anicraft_engine::doc::{ColorEffect, ElementId, ElementKind, Filter, FilterEntry, SymbolId};
         use anicraft_engine::geom::Affine;
         let filters = vec![FilterEntry::from(Filter::new("blur").unwrap()), FilterEntry { filter: Filter::new("adjust_color").unwrap(), enabled: false }];
-        let clip = Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters, events: Vec::new() } };
+        let clip = Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters, events: Vec::new(), pivot: None } };
         let names = |rows: Vec<Row>| -> Vec<String> {
             rows.iter()
                 .skip_while(|r| matches!(r, Row::Prop(p) if !p.is_filter()))
@@ -988,7 +988,7 @@ mod tests {
         assert_eq!(names(rows_for(&[], &[], &clip, &[])), ["[0 Blur true]", "filter.0.blur_x", "filter.0.blur_y", "filter.0.quality", "[1 Adjust Color false]", "filter.1.brightness", "filter.1.contrast", "filter.1.saturation", "filter.1.hue"]);
         // ADR 0099: a colour is one row; its channels are listed when it is open; quality and
         // the switches come last.
-        let glow = Element { kind: ElementKind::Symbol { symbol: SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: vec![Filter::new("glow").unwrap().into()], events: Vec::new() }, ..clip.clone() };
+        let glow = Element { kind: ElementKind::Symbol { symbol: SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: vec![Filter::new("glow").unwrap().into()], events: Vec::new(), pivot: None }, ..clip.clone() };
         assert_eq!(names(rows_for(&[], &[], &glow, &[])), ["[0 Glow true]", "filter.0.blur_x", "filter.0.blur_y", "filter.0.strength", "(0 color)", "filter.0.quality", "filter.0.inner", "filter.0.knockout"]);
         let open = names(rows_for(&[], &[], &glow, &[(0, FilterColor::Color)]));
         assert_eq!(open[4..9], ["(0 color)", "filter.0.color_red", "filter.0.color_green", "filter.0.color_blue", "filter.0.color_alpha"]);

@@ -658,7 +658,7 @@ impl<'a> Builder<'a> {
         // Blend modes by Animate's names; unknown ones stay Normal.
         let blend = el.attr("blendMode").and_then(BlendMode::from_key).unwrap_or_default();
         let filters = self.filters(el);
-        let mut e = Element { id: ElementId(self.doc.alloc_id()), name: String::new(), transform: m, color: fx, kind: ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events: Vec::new() } };
+        let mut e = Element { id: ElementId(self.doc.alloc_id()), name: String::new(), transform: m, color: fx, kind: ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events: Vec::new(), pivot: None } };
         // The instance name actions address it by (ADR 0024); one they couldn't is reported.
         if let Some(name) = el.attr("name").map(str::trim).filter(|n| !n.is_empty()) {
             if anicraft_doc::actions::valid_instance_name(name) {

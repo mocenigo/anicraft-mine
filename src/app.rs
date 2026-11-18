@@ -290,6 +290,8 @@ pub enum Drag {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum XfKind {
     Move,
+    /// Dragging the transformation point itself (ADR 0111): nothing is transformed.
+    Pivot,
     /// Handle position: -1/0/1 on each axis (corner, edge or centre).
     Scale { hx: i8, hy: i8 },
     Rotate,
@@ -387,6 +389,10 @@ pub struct App {
     /// Open this layer's colour popup on the next frame (screenshots, the audit).
     pub tl_color_open: Option<anicraft_engine::doc::LayerId>,
     pub convert_last: crate::convert_symbol::Last,
+    /// Expand Fill or Soften Fill Edges while its dialog is open, and what each was last given
+    /// (ADR 0109).
+    pub shape_dialog: Option<crate::shape_dialogs::ShapeDialog>,
+    pub shape_last: crate::shape_dialogs::Last,
     pub show_about: bool,
     pub show_files: bool,
     pub show_licenses: bool,
@@ -478,6 +484,9 @@ pub struct App {
     /// The Properties panel's Scale lock (#304; view state, not undoable): while on, editing
     /// one Scale axis adjusts the other so the selection keeps its width:height proportion.
     pub scale_lock: bool,
+    /// Free Transform's own state (ADR 0111; view state): the transformation point held for a
+    /// selection that can't keep one, and the box a drag began with.
+    pub xf: crate::xform::State,
     /// The zoom edit-bar field's draft while it has the keyboard (view state, not undoable):
     /// `None` shows the current zoom, `Some` is what is being typed.
     pub zoom_text: Option<String>,
@@ -494,6 +503,11 @@ pub struct App {
     /// Selected frames on the timeline, and the drag on the frame grid.
     pub frame_sel: Option<timeline::FrameSel>,
     pub tl_drag: timeline::TlDrag,
+    /// The layer being dragged by its name to another place in the stack (#407).
+    pub tl_layer_drag: Option<anicraft_engine::doc::LayerId>,
+    /// The layer column's width while its edge is dragged (#384); the preference takes it on
+    /// release.
+    pub tl_layer_w_drag: Option<f32>,
     /// Where the panels are (ADR 0075): the current workspace's arrangement.
     pub dock: crate::dock::Layout,
     /// The dock's view state: a tab being dragged, where groups were drawn.
@@ -576,6 +590,10 @@ pub struct App {
     /// A copy or cut ran: the system clipboard gets a note at the end of the frame, so the next
     /// Ctrl/⌘+V reaches the app (egui-winit sends a paste only when the clipboard holds text).
     copied: bool,
+    /// Paste looks at the system clipboard for a picture from another app (#263). Off in
+    /// screenshot runs and tests, which must not depend on what this computer last copied.
+    system_clipboard: bool,
+    swallowed_paste: platform::SwallowedPaste,
     /// Document revision at the end of the last frame (edits schedule a repaint).
     last_revision: u64,
     title: String,
@@ -681,6 +699,7 @@ impl App {
     /// The app on an egui context (the window's, or a headless one in tests).
     pub fn with_context(ctx: &egui::Context, session: Session, shot: Option<PathBuf>) -> App {
         theme::apply(ctx);
+        platform::pointer_feel(ctx);
         let shot_mode = shot.is_some();
         // Screenshot runs use defaults so automated checks are reproducible.
         let prefs = if shot_mode { prefs::Prefs::default() } else { prefs::Prefs::load() };
@@ -732,6 +751,8 @@ impl App {
             tl_header_spill: 0.0,
             tl_color_open: None,
             convert_last: Default::default(),
+            shape_dialog: None,
+            shape_last: Default::default(),
             show_about: false,
             show_files: false,
             show_licenses: false,
@@ -781,6 +802,7 @@ impl App {
             width_sel: None,
             open_fill_swatch: false,
             scale_lock: false,
+            xf: crate::xform::State::default(),
             zoom_text: None,
             bone_sel: None,
             bind: crate::bind_tool::BindOptions::default(),
@@ -789,6 +811,8 @@ impl App {
             motion_drag: None,
             frame_sel: None,
             tl_drag: timeline::TlDrag::None,
+            tl_layer_drag: None,
+            tl_layer_w_drag: None,
             dock: prefs.workspaces.layout(),
             dock_view: Default::default(),
             manage_workspaces: Default::default(),
@@ -834,6 +858,8 @@ impl App {
             fonts_rx: None,
             glyph_check: true,
             copied: false,
+            system_clipboard: !shot_mode && !platform::WEB,
+            swallowed_paste: platform::SwallowedPaste::default(),
             last_revision: 0,
             title: String::new(),
             keymap,
@@ -863,6 +889,7 @@ impl App {
             macros: Default::default(),
         };
         app.apply_prefs(ctx);
+        crate::brushtool::restore(&mut app);
         app.decode_sounds();
         app.status_ok(tr!("Welcome to AniCraft. Press Enter to play the sample animation."));
         if let Some(e) = recovery_err {
@@ -1856,6 +1883,74 @@ impl App {
                 self.tool = Tool::Transform;
                 self.run("layer.select", json!({"index": 0}));
                 self.run("edit.select_all", json!({}));
+            }
+            Some(which @ ("shapecommands" | "expandfill" | "softenfill")) => {
+                // Modify › Shape (ADR 0109) on a new layer: a dashed, tapering line converted to
+                // fills (selected: Properties shows a fill, no line), a star with its fill
+                // expanded, and a blob with a soft edge of twelve steps. "expandfill" and
+                // "softenfill" show their dialogs over a selected shape instead.
+                self.tool = Tool::Select;
+                self.run("layer.new", json!({"name": "Shapes"}));
+                self.run("draw.object_drawing", json!({"on": true}));
+                self.run("draw.star", json!({"cx": 760, "cy": 560, "outer": 70, "points": 5, "fill": "#f3d36b", "stroke": null}));
+                self.run("modify.expand_fill", json!({"distance": 14}));
+                self.run("draw.path", json!({"d": "M 880 600 C 880 500 1010 470 1070 540 C 1130 610 1080 680 990 670 C 930 664 880 650 880 600 Z", "fill": "#e8553b", "stroke": null}));
+                if which == "shapecommands" {
+                    self.run("modify.soften_fill_edges", json!({"distance": 36, "steps": 12}));
+                    self.run("draw.path", json!({"d": "M 80 620 C 200 480 300 720 420 580 C 500 490 600 520 660 640", "fill": null, "stroke": "#1b2a4a", "stroke_width": 18, "profile": "taper_end", "dash": [46, 16], "cap": "round"}));
+                    self.run("modify.lines_to_fills", json!({}));
+                } else {
+                    crate::shape_dialogs::open(self, if which == "expandfill" { crate::shape_dialogs::Kind::Expand } else { crate::shape_dialogs::Kind::Soften });
+                }
+            }
+            Some("origins") => {
+                // Transformation origins (ADR 0109, #296): three hands, each an instance whose
+                // registration point is at one end, selected with Free Transform and turned a
+                // sixth of a turn each about its own point; Properties shows Transform about.
+                self.run("layer.new", json!({"name": "Hands"}));
+                self.run("draw.object_drawing", json!({"on": true}));
+                for (i, (x, y)) in [(260.0f32, 600.0f32), (560.0, 560.0), (860.0, 620.0)].into_iter().enumerate() {
+                    self.run("draw.rect", json!({"x": x - 90.0, "y": y - 9.0, "w": 180, "h": 18, "radius": 9, "fill": "#1b2a4a", "stroke": null}));
+                    if let Some(id) = self.run("modify.convert_to_symbol", json!({"name": format!("Hand {}", i + 1)})).and_then(|v| v["instance"].as_u64()) {
+                        // i18n-exempt: a sample symbol name
+                        self.run("symbol.edit", json!({"id": id}));
+                        self.run("edit.select_all", json!({}));
+                        self.run("element.translate", json!({"dx": 80, "dy": 0}));
+                        self.run("symbol.exit", json!({}));
+                    }
+                }
+                let layer = self.s.layer;
+                let ids: Vec<u64> = self.s.elements_on(layer).iter().map(|e| e.id.0).collect();
+                self.run("element.select", json!({"ids": ids}));
+                self.tool = Tool::Transform;
+                self.run("modify.transform_origin", json!({"mode": "registration"}));
+                let (sin, cos) = (-60f32).to_radians().sin_cos();
+                self.run("modify.transform", json!({"a": cos, "b": sin, "c": -sin, "d": cos, "e": 0, "f": 0, "origin": "registration"}));
+            }
+            Some("pivot") => {
+                // The transformation point and the turned box (ADR 0111; #302, #175): an arm,
+                // an instance whose transformation point was moved to its shoulder, turned 35°
+                // about it with Free Transform. Its box is turned with it, the white circle is
+                // on the shoulder, and Properties shows the point.
+                self.run("layer.new", json!({"name": "Arm"}));
+                self.run("draw.object_drawing", json!({"on": true}));
+                self.run("draw.rect", json!({"x": 420, "y": 520, "w": 300, "h": 44, "radius": 22, "fill": "#1b2a4a", "stroke": null}));
+                self.run("modify.convert_to_symbol", json!({"name": "Arm"})); // i18n-exempt: a sample symbol name
+                self.tool = Tool::Transform;
+                self.run("modify.transformation_point", json!({"x": 442, "y": 542}));
+                let (sin, cos) = (-35f32).to_radians().sin_cos();
+                let turn = anicraft_engine::geom::Affine::translate(442.0, 542.0).mul(&anicraft_engine::geom::Affine { m: [cos, sin, -sin, cos, 0.0, 0.0] }).mul(&anicraft_engine::geom::Affine::translate(-442.0, -542.0));
+                let [a, b, c, d, e, f] = turn.m;
+                self.run("modify.transform", json!({"a": a, "b": b, "c": c, "d": d, "e": e, "f": f}));
+            }
+            Some("layeropacity") => {
+                // Layer opacity (ADR 0111, #279): the top two layers faded, each as one, with
+                // the percentage beside their names; Layer Properties open on the active one.
+                let ids: Vec<u64> = self.s.timeline().layers.iter().filter(|l| !matches!(l.kind, anicraft_engine::doc::LayerKind::Folder | anicraft_engine::doc::LayerKind::Camera)).map(|l| l.id.0).collect();
+                for (id, opacity) in ids.iter().zip([40, 65]) {
+                    self.run("layer.set_opacity", json!({"layer": id, "opacity": opacity}));
+                }
+                crate::layer_props::open(self, ids.first().map(|id| anicraft_engine::doc::LayerId(*id)));
             }
             Some("points") => {
                 // A pencil stroke and a pen path being edited, with one smooth point selected.
@@ -2903,7 +2998,7 @@ impl App {
 
     /// Any modal (prompt, confirmation, close guard) is open: global shortcuts pause.
     pub fn modal_open(&self) -> bool {
-        self.prompt.is_some() || self.convert.is_some() || self.confirm.is_some() || self.close_dialog || self.plugin_dialog.is_some() || self.templates.save.is_some()
+        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.confirm.is_some() || self.close_dialog || self.plugin_dialog.is_some() || self.templates.save.is_some()
     }
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
@@ -3251,10 +3346,38 @@ impl App {
             crate::convert_symbol::open(self);
             return;
         }
+        // A picture copied in another app (a paint program, a screenshot) is what Paste means
+        // when it is the newest thing copied (#263).
+        if matches!(id, "edit.paste" | "edit.paste_in_place") && self.paste_from_system() {
+            return;
+        }
+        // Pasted raw artwork floats, selected, until it is deselected (as in Animate), so it
+        // can be dragged off what it landed on before the two join (#391).
+        // Modify › Shape › Expand Fill and Soften Fill Edges ask for a distance (ADR 0109).
+        if id == "modify.expand_fill" {
+            crate::shape_dialogs::open(self, crate::shape_dialogs::Kind::Expand);
+            return;
+        }
+        if id == "modify.soften_fill_edges" {
+            crate::shape_dialogs::open(self, crate::shape_dialogs::Kind::Soften);
+            return;
+        }
+        if id == "modify.transform_origin" {
+            // The key or the menu moves to the next mode, and says which it is.
+            if let Some(v) = self.run(id, json!({})) {
+                let mode = v["mode"].as_str().and_then(anicraft_engine::TransformOrigin::from_key).unwrap_or_default();
+                self.status_ok(tr!("Transformation origin: {mode}.", mode = crate::panels::transform_origin_label(mode)));
+            }
+            return;
+        }
         if id == "edit.paste" {
             // Paste in the centre of what you are looking at.
             let c = self.view_center_stage();
-            self.request(id, json!({"x": c.x, "y": c.y}));
+            self.request(id, json!({"x": c.x, "y": c.y, "float": true}));
+            return;
+        }
+        if id == "edit.paste_in_place" {
+            self.request(id, json!({"float": true}));
             return;
         }
         let prompt = match id {
@@ -3332,6 +3455,48 @@ impl App {
     }
 
     /// The stage point at the centre of the visible canvas.
+    /// Pastes the system clipboard's picture, when it is newer than what AniCraft copied.
+    /// AniCraft's own Copy leaves a note as text on the system clipboard, so while that note is
+    /// still there the artwork copied here is the newest thing.
+    fn paste_from_system(&mut self) -> bool {
+        if !self.system_clipboard {
+            return false;
+        }
+        let own = !self.s.clipboard.is_empty() && platform::clipboard_text().is_some_and(|t| t == tr!("Copied from AniCraft"));
+        if own {
+            return false;
+        }
+        let Some(image) = platform::clipboard_image() else { return false };
+        self.paste_image(&image);
+        true
+    }
+
+    /// Places `image` in the middle of the view as a bitmap, in the Library too (as an image
+    /// dropped on the stage is), selected. One undo step.
+    pub(crate) fn paste_image(&mut self, image: &platform::ClipboardImage) {
+        let png = match anicraft_engine::render::encode_png(image.width, image.height, &image.rgba) {
+            Ok(png) => png,
+            Err(e) => {
+                self.status_err(tr!("The copied picture could not be pasted: {error}", error = e.to_string()));
+                return;
+            }
+        };
+        // The engine imports files: the picture goes through one, removed again at once.
+        let dir = std::env::temp_dir().join(format!("anicraft-paste-{}", std::process::id()));
+        // The file's name becomes the bitmap's name in the Library, so it is translated.
+        let path = dir.join(format!("{}.png", tr!("Pasted image")));
+        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, png)) {
+            self.status_err(tr!("The copied picture could not be pasted: {error}", error = e.to_string()));
+            return;
+        }
+        let c = self.view_center_stage();
+        if self.run("file.drop", json!({"paths": [path.display().to_string()], "to": "stage", "x": c.x, "y": c.y})).is_some() {
+            self.status_ok(tr!("Pasted the copied picture ({w} × {h} px) — {undo} to undo", w = image.width, h = image.height, undo = self.undo_key()));
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
     pub fn view_center_stage(&self) -> egui::Vec2 {
         let size = egui::vec2(self.s.doc.stage.width as f32, self.s.doc.stage.height as f32);
         size * 0.5 - self.view.pan / self.view.zoom.max(1e-3)
@@ -3555,6 +3720,11 @@ impl App {
         // (A browser sends these keys as presses already, with its clipboard events after.)
         if !platform::WEB {
             ctx.input_mut(clipboard_keys_as_presses);
+        }
+        // Ctrl/⌘+V with a picture on the clipboard never arrives as a key or a paste (#263).
+        let swallowed = ctx.input(|i| self.swallowed_paste.frame(i));
+        if swallowed && self.paste_from_system() {
+            return;
         }
         let control = keys == crate::a11y::Keyboard::Control;
         if !control {
@@ -4118,6 +4288,7 @@ impl App {
         crate::drop::frame(self, &ctx);
         self.prompt_window(&ctx);
         crate::convert_symbol::window(self, &ctx);
+        crate::shape_dialogs::window(self, &ctx);
         crate::aids_dialog::window(self, &ctx);
         crate::templates::save_window(self, &ctx);
         crate::layer_props::window(self, &ctx);
@@ -4169,6 +4340,8 @@ impl App {
         crate::brush_panel::sync(self);
         crate::panels::sync_filter_presets(self);
         crate::rulers::sync(self);
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        crate::brushtool::sync(self, pointer_down);
         // A browser asks before leaving a page with unsaved work (its close guard).
         platform::set_unsaved(self.s.is_dirty());
         // Copied artwork or frames: the system clipboard says so, as any copy replaces what it
@@ -4207,6 +4380,66 @@ fn clipboard_keys_as_presses(i: &mut egui::InputState) {
         })
         .collect();
     i.events.extend(keys.into_iter().map(|key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }));
+}
+
+/// #263: a picture copied in another app pastes as a bitmap.
+#[cfg(test)]
+mod system_paste_tests {
+    use super::App;
+    use crate::platform::{ClipboardImage, SwallowedPaste};
+    use egui::{Event, Key, Modifiers, RawInput};
+
+    /// The picture lands in the middle of the view, selected, with its bitmap in the Library;
+    /// one undo takes both away.
+    #[test]
+    fn a_copied_picture_pastes_as_a_bitmap_in_the_middle_of_the_view() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        assert!(!app.system_clipboard, "tests never read this computer's clipboard");
+        assert!(!app.paste_from_system());
+        let before = app.s.doc.clone();
+        let image = ClipboardImage { width: 40, height: 20, rgba: [10, 200, 30, 255].repeat(800) };
+        app.paste_image(&image);
+        assert_eq!(app.s.doc.bitmaps.len(), 1);
+        assert_eq!(app.s.doc.bitmaps.first().map(|b| (b.width, b.height)), Some((40, 20)));
+        assert_eq!(app.s.selection.len(), 1, "the pasted picture is selected");
+        let (b, c) = (app.s.selection_bounds(), app.view_center_stage());
+        assert!((b.width() - 40.0).abs() < 0.01 && (b.height() - 20.0).abs() < 0.01, "{b:?}");
+        assert!((b.center().x - c.x).abs() < 0.51 && (b.center().y - c.y).abs() < 0.51, "centred on the view: {b:?} vs {c:?}");
+        assert!(app.status.as_ref().is_some_and(|s| !s.error), "{:?}", app.status.as_ref().map(|s| &s.text));
+        app.run("edit.undo", serde_json::json!({}));
+        assert!(app.s.doc == before, "one undo");
+    }
+
+    /// With a picture on the clipboard, Ctrl+V reaches the app only as the release of V. That
+    /// is a paste; a V that was pressed (the Selection tool's key) or pasted as text is not.
+    #[test]
+    fn a_release_of_v_with_nothing_before_it_is_a_swallowed_paste() {
+        let ctx = egui::Context::default();
+        let key = |pressed, modifiers| Event::Key { key: Key::V, physical_key: None, pressed, repeat: false, modifiers };
+        let feed = |state: &mut SwallowedPaste, time: f64, modifiers: Modifiers, events: Vec<Event>| {
+            let mut all = vec![Event::ModifiersChanged(modifiers)];
+            all.extend(events);
+            let mut heard = false;
+            ctx.run_ui(RawInput { time: Some(time), events: all, ..Default::default() }, |ui| heard = ui.input(|i| state.frame(i))).textures_delta.clear();
+            heard
+        };
+        let (ctrl, none) = (Modifiers::COMMAND | Modifiers::CTRL, Modifiers::NONE);
+        // Ctrl down, (the press of V is swallowed), V up.
+        let mut state = SwallowedPaste::default();
+        assert!(!feed(&mut state, 1.0, ctrl, vec![]));
+        assert!(feed(&mut state, 1.1, ctrl, vec![key(false, ctrl)]));
+        // Ctrl let go first, V a moment later: still that paste. Much later: not.
+        assert!(!feed(&mut state, 2.0, ctrl, vec![]));
+        assert!(feed(&mut state, 2.2, none, vec![key(false, none)]));
+        assert!(!feed(&mut state, 9.0, none, vec![key(false, none)]));
+        // Text on the clipboard: the paste event came, so the release is just a release.
+        assert!(!feed(&mut state, 10.0, ctrl, vec![Event::Paste("text".into())]));
+        assert!(!feed(&mut state, 10.1, ctrl, vec![key(false, ctrl)]));
+        // The V key by itself (the Selection tool).
+        assert!(!feed(&mut state, 11.0, none, vec![key(true, none)]));
+        assert!(!feed(&mut state, 11.1, none, vec![key(false, none)]));
+    }
 }
 
 /// Ctrl/⌘+X, C and V on the stage (issue #197). On the desktop egui-winit hands them over as

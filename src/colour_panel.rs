@@ -149,7 +149,8 @@ pub fn popup_for(ui: &egui::Ui, anchor: &Response, popup: Id, paint: Option<&Pai
         crate::colour::new_session(ui.ctx());
     }
     let mut edit = None;
-    let shown = egui::Popup::menu(anchor).id(popup).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+    // A click on the stage while this is open picks a colour there (the picker's eyedropper).
+    let shown = egui::Popup::menu(anchor).id(popup).close_behavior(crate::colour::close_behavior(ui.ctx())).show(|ui| {
         edit = fill_picker(ui, popup, paint, bitmaps);
     });
     if let Some(r) = shown {

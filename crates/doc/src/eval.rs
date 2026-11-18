@@ -537,10 +537,32 @@ fn interpolate(a: &Element, b: &Element, pr: Progress, morph: bool, hints: &[(an
         (d.rotation, d.skew, d.sx, d.sy) = (r.rotation, r.skew, s.sx, s.sy);
     }
     let mut transform = d.compose();
+    // An instance with a transformation point (ADR 0111) turns, scales and skews about it: the
+    // point travels from where the first keyframe has it to where the next does, and the
+    // instance is placed round it. (A keyframe without one takes the other's.) Without a
+    // point this is the registration point, as above.
+    let pivot = match (a.pivot().or(b.pivot()), b.pivot().or(a.pivot())) {
+        (Some(pa), Some(pb)) => {
+            let (qa, qb) = (a.transform.apply(pa), b.transform.apply(pb));
+            let (q, p) = (qa + (qb - qa) * pr.position, pa + (pb - pa) * pr.position);
+            let about = Affine { m: [transform.m[0], transform.m[1], transform.m[2], transform.m[3], 0.0, 0.0] };
+            let o = about.apply(p);
+            let placed = Affine::translate(q.x - o.x, q.y - o.y).mul(&about);
+            if placed.is_finite() {
+                transform = placed;
+            }
+            Some(p)
+        }
+        _ => None,
+    };
     if let Some((g, orient)) = guide {
         transform = follow(g, orient, &a.transform, &b.transform, pr.position, transform);
     }
-    Some(Element { id: a.id, name: a.name.clone(), transform, color: a.color.lerp(&b.color, pr.color), kind })
+    let mut el = Element { id: a.id, name: a.name.clone(), transform, color: a.color.lerp(&b.color, pr.color), kind };
+    if pivot.is_some() {
+        el.set_pivot(pivot);
+    }
+    Some(el)
 }
 
 /// What a timeline is evaluated inside of.
@@ -694,6 +716,20 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
             None => cx.xf,
         };
         let lc = LayerCtx { layer, frame, kf_start, clip, masks, guide, outline: layer_outline, xf: layer_xf };
+        // A layer below full opacity (its own, or a folder's it is in; ADR 0111) fades as one:
+        // its artwork composites in a group, and the group blends at the layer's opacity, so
+        // its overlapping parts don't show through each other. Mask artwork ignores opacity,
+        // and guide artwork is never in the movie; an empty frame needs no group.
+        let fade = if masks.is_none() && !guide && !elements.is_empty() { tl.layer_opacity(index) } else { 1.0 };
+        let faded;
+        let cx = if fade < 1.0 - 1e-4 {
+            let gid = out.groups.len() as u32;
+            out.groups.push(Group { parent: cx.group, alpha: fade, blend: crate::BlendMode::Normal, filters: Arc::from(Vec::new()), clip });
+            faded = Ctx { group: Some(gid), ..*cx };
+            &faded
+        } else {
+            cx
+        };
         for el in elements.iter() {
             eval_element(doc, cx, &lc, el, out, play);
         }
@@ -985,3 +1021,7 @@ fn sliced_shape(s: &Shape, own: &Affine, sl: &Slicing) -> (Arc<Path>, Affine, Op
 #[cfg(test)]
 #[path = "eval_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pivot_tests.rs"]
+mod pivot_tests;

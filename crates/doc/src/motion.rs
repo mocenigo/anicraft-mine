@@ -1160,7 +1160,16 @@ impl MotionTween {
             }
         }
         if on_path.is_some() || self.tracks.iter().any(|t| t.property.is_transform()) {
-            let m = props.transform();
+            let mut m = props.transform();
+            // With a transformation point (ADR 0111) the position tracks carry the point, and
+            // the target turns, scales and skews about it.
+            if let Some(p) = base.pivot() {
+                let (d0, d1) = (base_props.transform().translation(), m.translation());
+                let at = base.transform.apply(p) + (d1 - d0);
+                let about = Affine { m: [m.m[0], m.m[1], m.m[2], m.m[3], 0.0, 0.0] };
+                let o = about.apply(p);
+                m = Affine::translate(at.x - o.x, at.y - o.y).mul(&about);
+            }
             if m.is_finite() {
                 el.transform = m;
             }
@@ -1962,7 +1971,7 @@ mod tests {
     /// A movie clip instance with `filters`, at (x, 0).
     fn clip(x: f32, filters: Vec<crate::Filter>) -> Element {
         Element {
-            kind: ElementKind::Symbol { symbol: crate::SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: filters.into_iter().map(crate::FilterEntry::from).collect(), events: Vec::new() },
+            kind: ElementKind::Symbol { symbol: crate::SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: filters.into_iter().map(crate::FilterEntry::from).collect(), events: Vec::new(), pivot: None },
             ..el(1, x, 0.0)
         }
     }

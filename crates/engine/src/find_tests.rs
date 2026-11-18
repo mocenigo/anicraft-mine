@@ -54,7 +54,7 @@ impl Build {
             name: name.into(),
             transform: Affine::translate(100.0, 50.0),
             color: ColorEffect::default(),
-            kind: ElementKind::Symbol { symbol, loop_mode: LoopMode::Loop, first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
+            kind: ElementKind::Symbol { symbol, loop_mode: LoopMode::Loop, first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new(), pivot: None },
         }
     }
     /// A layer with keyframes `(start, duration, label, elements)`.

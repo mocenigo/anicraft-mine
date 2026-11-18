@@ -81,7 +81,7 @@ fn nested_symbols_compose_transforms_and_cycles_terminate() {
             name: String::new(),
             transform: Affine::translate(1.0, 0.0),
             color: ColorEffect::default(),
-            kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
+            kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new(), pivot: None },
         },
     );
     tl.layers.push(Arc::new(layer));
@@ -94,7 +94,7 @@ fn nested_symbols_compose_transforms_and_cycles_terminate() {
             name: String::new(),
             transform: Affine::translate(100.0, 0.0),
             color: ColorEffect::Alpha(0.5),
-            kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
+            kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new(), pivot: None },
         },
     );
     let dl = evaluate(&d, 0);
@@ -146,7 +146,7 @@ fn masks_inside_symbols_nest_in_the_instance_clip() {
         name: String::new(),
         transform: Affine::IDENTITY,
         color: ColorEffect::default(),
-        kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
+        kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new(), pivot: None },
     };
     push(Arc::make_mut(&mut d.timeline_mut(0).layers[1]), 0, inst);
     let dl = evaluate(&d, 0);
@@ -323,7 +323,7 @@ fn movie_clips_play_their_own_timeline_graphics_keep_step_buttons_hold_up() {
         name: String::new(),
         transform: Affine::translate(x, 0.0),
         color: ColorEffect::default(),
-        kind: ElementKind::Symbol { symbol: sid, loop_mode: crate::LoopMode::Loop, first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
+        kind: ElementKind::Symbol { symbol: sid, loop_mode: crate::LoopMode::Loop, first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new(), pivot: None },
     };
     let (mut k0, mut k1) = (Keyframe::new(0, 5), Keyframe::new(5, 7));
     k0.elements.push(Arc::new(inst(0.0)));
@@ -561,7 +561,7 @@ fn instance_filters_tween_when_they_pair_up() {
     let mut d = Document::default();
     let sid = SymbolId(90);
     d.library.push(Arc::new(Symbol { id: sid, name: "Clip".into(), kind: SymbolKind::MovieClip, linkage: None, scale_grid_kept: None, scale_grid: None, timeline: Timeline { layers: vec![Arc::new(Layer::new(LayerId(91), "x"))] } }));
-    let inst = |filters: Vec<Filter>| Element { id: ElementId(92), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: filters.into_iter().map(Into::into).collect(), events: Vec::new() } };
+    let inst = |filters: Vec<Filter>| Element { id: ElementId(92), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: filters.into_iter().map(Into::into).collect(), events: Vec::new(), pivot: None } };
     let blur = |b: f32| Filter::Blur { blur_x: b, blur_y: b, quality: 1 };
     let mut tw = Tween::new(Easing::Linear, TweenKind::Classic);
     tw.set_ease(crate::EaseGroup::Filters, Some(Easing::QuadIn));

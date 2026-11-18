@@ -167,7 +167,11 @@ mod tests {
                 .collect();
             let mut overlaps = 0;
             let until = Instant::now() + Duration::from_millis(300);
-            while Instant::now() < until {
+            // The run without the gate goes on until its detector has seen an overlap (it must:
+            // the threads submit nearly all the time), however long a busy machine takes to
+            // let them run at all. On CI's Linux runner 300 ms could pass before any did.
+            let patience = Instant::now() + Duration::from_secs(30);
+            while Instant::now() < until || (!gated && overlaps == 0 && Instant::now() < patience) {
                 // A frame: the gate is open for a moment.
                 gate.open();
                 std::thread::sleep(Duration::from_micros(200));
@@ -192,8 +196,11 @@ mod tests {
         let (overlaps, done) = run(true);
         assert_eq!(overlaps, 0, "a submission ran while the gate was closed");
         assert!(done > 0, "work still gets through");
-        let (overlaps, _) = run(false);
-        assert!(overlaps > 0, "the detector sees the race without the gate");
+        // The control: without the gate the detector catches the race. On a runner with few
+        // cores the workers and the detector may not overlap in one short run, so it gets a few
+        // tries; the gated run above must hold in every run, this one in any.
+        let seen = (0..8).any(|_| run(false).0 > 0);
+        assert!(seen, "the detector sees the race without the gate");
     }
 
     /// A closed gate asks its owner for a frame, and the submission runs when that frame opens it.

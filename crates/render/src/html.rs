@@ -675,7 +675,7 @@ impl<'a> Bake<'a> {
                     }
                 }
             },
-            ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events } => {
+            ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events, .. } => {
                 let (Some(&y), Some(sym)) = (self.symbols.get(symbol), self.doc.symbol(*symbol)) else { return };
                 let len = sym.timeline.frame_count();
                 // The page's player places symbols itself and doesn't slice them yet (ADR 0055).
@@ -778,6 +778,12 @@ impl<'a> Bake<'a> {
                 if layer.sound_gain() != 1.0 {
                     entry.insert("sg".into(), num(layer.sound_gain(), 10_000.0));
                 }
+                // The layer's opacity (its own times its folders'; ADR 0111): the page fades
+                // the layer as one group. Mask artwork ignores it.
+                let fade = tl.layer_opacity(index);
+                if fade < 1.0 - 1e-4 && layer.kind != LayerKind::Mask {
+                    entry.insert("o".into(), num(fade, 10_000.0));
+                }
                 if layer.kind == LayerKind::Mask {
                     entry.insert("mk".into(), json!(slots.get(&layer.id.0).copied().unwrap_or(0)));
                     // A soft mask (ADR 0070): 1 alpha, 2 luminance.
@@ -795,12 +801,16 @@ impl<'a> Bake<'a> {
                 }
                 let walk = layer.parent.and_then(|p| tl.layer(p)).filter(|g| g.kind == LayerKind::Guide).and_then(|g| guide_walk(g, f));
                 let mut items = Vec::new();
+                let mut any = false;
                 if let Some((start, els)) = evaluate_shown(layer, f, walk.as_ref(), self.doc.stage.fps) {
+                    any = !els.is_empty();
                     for el in els.iter() {
                         self.element(el, layer, f, start, &mut items);
                     }
                 }
-                if items.is_empty() && layer.kind != LayerKind::Mask {
+                // (A faded layer with elements stays, drawing or not: it is a group in the
+                // evaluator's list, and the page's groups are numbered the same.)
+                if items.is_empty() && layer.kind != LayerKind::Mask && !(any && entry.contains_key("o")) {
                     continue;
                 }
                 entry.insert("e".into(), Value::Array(items));

@@ -14,7 +14,7 @@ fn inst(id: u64, symbol: u64, name: &str, x: f32, y: f32, events: Vec<EventHandl
         name: name.into(),
         transform: Affine::translate(x, y),
         color: ColorEffect::default(),
-        kind: ElementKind::Symbol { symbol: SymbolId(symbol), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events },
+        kind: ElementKind::Symbol { symbol: SymbolId(symbol), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events, pivot: None },
     })
 }
 

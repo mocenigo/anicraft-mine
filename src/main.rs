@@ -84,6 +84,7 @@ mod rich_edit;
 mod rulers;
 mod scale_grid;
 mod shape_envelope;
+mod shape_dialogs;
 mod sound;
 mod shape_hints;
 mod stage;
@@ -99,6 +100,7 @@ mod timeline;
 mod web;
 mod widthtool;
 mod windows;
+mod xform;
 mod workspaces_window;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -282,7 +284,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
 /// `--help` (the console's text, in English).
 #[cfg(not(target_arch = "wasm32"))]
 // i18n-exempt: the --help console text
-const HELP: &str = "anicraft [file.anicraft|file.fla|file.xfl] [--version] [--screenshot out.png [--shot-width <px>]] [--renderer gl|wgpu|vulkan|dx12|metal] [--theme graphite|high-contrast] [--scale <percent>] [--lang <code>|auto|pseudo] [--control <port>] [--open palette|shortcuts|helpbone|lastscene|start|drop|droplibrary|select|selectzoom|about|files|confirm|transform|points|merge|rawparts|rawedit|rawsub|rawpoints|rawsnap|rulers|editguides|editgrid|symboledit|groups|combine|nineslice|nineslicedit|brush|brushing|polystar|paintinside|drawingedit|shapeenvelope|brushlibrary|brushcurve|paintbrush|eraser|erasing|erasemerge|tiltbrush|eyedropper|pen|frames|span|bucket|tlzoom|tlwide|motion|motionspan|motionpath|motionpoints|motionedit|motionpins|motionpinsspan|hints|hintsend|camera|cameraview|bones|springbones|shapebones|shapeweights|mixedbones|layerdepth|layerdepthview|filters|strokes|prefs|licenses|zoom|recovery|plugins|actions|script|scriptproblems|testmovie|testmovieinside|testscript|textfields|testtext|richtext|softmask|pathtext|button|testhits|exporthtml|publish|publishreport|publishanim|sound|envelope|ease|easepreset|plugineases|pluginexport|pluginexportwindow|library|librarymenu|libraryfolders|colour|layerprops|frameview|layercolour|timelinepolish|dock|dockicons|floattabs|docknarrow|workspaces|animator|designer|gradient|gradientbucket|swatches|swatchpanel]\n\
+const HELP: &str = "anicraft [file.anicraft|file.fla|file.xfl] [--version] [--screenshot out.png [--shot-width <px>]] [--renderer gl|wgpu|vulkan|dx12|metal] [--theme graphite|high-contrast] [--scale <percent>] [--lang <code>|auto|pseudo] [--control <port>] [--open palette|shortcuts|helpbone|lastscene|start|drop|droplibrary|select|selectzoom|about|files|confirm|transform|shapecommands|expandfill|softenfill|origins|pivot|layeropacity|points|merge|rawparts|rawedit|rawsub|rawpoints|rawsnap|rulers|editguides|editgrid|symboledit|groups|combine|nineslice|nineslicedit|brush|brushing|polystar|paintinside|drawingedit|shapeenvelope|brushlibrary|brushcurve|paintbrush|eraser|erasing|erasemerge|tiltbrush|eyedropper|pen|frames|span|bucket|tlzoom|tlwide|motion|motionspan|motionpath|motionpoints|motionedit|motionpins|motionpinsspan|hints|hintsend|camera|cameraview|bones|springbones|shapebones|shapeweights|mixedbones|layerdepth|layerdepthview|filters|strokes|prefs|licenses|zoom|recovery|plugins|actions|script|scriptproblems|testmovie|testmovieinside|testscript|textfields|testtext|richtext|softmask|pathtext|button|testhits|exporthtml|publish|publishreport|publishanim|sound|envelope|ease|easepreset|plugineases|pluginexport|pluginexportwindow|library|librarymenu|libraryfolders|colour|layerprops|frameview|layercolour|timelinepolish|dock|dockicons|floattabs|docknarrow|workspaces|animator|designer|gradient|gradientbucket|swatches|swatchpanel]\n\
      --renderer   the window's graphics (also ANICRAFT_RENDERER); default automatic, falling back to OpenGL\n\
      --open       shows a panel at start (handy with --screenshot for visual checks)\n\
      --shot-width scales the screenshot down to this width (the user guide's pictures)\n\
@@ -469,6 +471,8 @@ mod packaging_tests;
 mod rulers_tests;
 #[cfg(test)]
 mod retime_ui_tests;
+#[cfg(test)]
+mod layer_ui_tests;
 #[cfg(test)]
 mod tilt_ui_tests;
 #[cfg(test)]

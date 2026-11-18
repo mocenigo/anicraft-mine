@@ -58,6 +58,50 @@ impl Default for BrushOptions {
     }
 }
 
+/// The name the tools' own settings are kept under in the preferences.
+const KEPT: &str = "tool";
+
+/// The Brush's and the Paint Brush's settings as the preferences kept them (#331).
+pub fn restore(app: &mut App) {
+    if let Some(p) = &app.prefs.brush_tool {
+        app.brush.apply(p);
+    }
+    if let Some(p) = &app.prefs.paint_brush_tool {
+        app.paint_brush.apply(p);
+    }
+}
+
+/// The brushes' settings changed: into the preferences, so the next start has them (#331).
+/// Not while a slider is being dragged (one write when it is let go), and not in screenshot or
+/// test runs, which never write the user's preferences. Returns whether they changed.
+pub fn sync(app: &mut App, pointer_down: bool) -> bool {
+    if pointer_down {
+        return false;
+    }
+    let mut changed = false;
+    for paint in [false, true] {
+        let (tool, default) = if paint { (app.paint_brush, BrushOptions::paint_brush()) } else { (app.brush, BrushOptions::default()) };
+        let now = tool.preset(KEPT);
+        let kept = if paint { &mut app.prefs.paint_brush_tool } else { &mut app.prefs.brush_tool };
+        // Untouched defaults stay unwritten, so they follow new defaults.
+        let same = match kept {
+            Some(k) => *k == now,
+            None => now == default.preset(KEPT),
+        };
+        if !same {
+            *kept = Some(now);
+            changed = true;
+        }
+    }
+    if changed
+        && app.shot.is_none()
+        && let Err(e) = app.prefs.save()
+    {
+        app.status_err(tr!("Could not save preferences: {e}", e = e));
+    }
+    changed
+}
+
 /// Sizes the tool offers (the command takes 0.1..2000).
 pub const SIZE_MIN: f32 = 1.0;
 pub const SIZE_MAX: f32 = 400.0;

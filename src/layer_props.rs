@@ -27,6 +27,8 @@ pub struct LayerPropsDialog {
     pub onion: bool,
     /// Rows: 1, 2 or 3 (100, 200, 300 %).
     pub height: u8,
+    /// Opacity in percent, 0 to 100 (ADR 0111).
+    pub opacity: f64,
     /// What the layer had when the dialog opened: OK sends only what changed.
     was: Value,
     focus: bool,
@@ -55,6 +57,7 @@ pub fn open(app: &mut App, layer: Option<LayerId>) {
         outline: l.outline,
         onion: l.onion,
         height: l.height(),
+        opacity: p.get("opacity").and_then(Value::as_f64).unwrap_or(100.0),
         was: p,
         focus: true,
     });
@@ -162,6 +165,16 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
                 crate::theme::checkbox(ui, &mut d.onion, tr!("Onion skin this layer")).on_hover_text(tr!("Show this layer's frames around the playhead while onion skin is on"));
             });
         }
+        // Opacity (ADR 0111, #279): in the movie and every export. The camera layer holds no
+        // artwork; mask and guide artwork ignore it.
+        if kind != LayerKind::Camera {
+            form_row(ui, FORM_LABEL_DIALOG, tr!("Opacity"), |ui| {
+                let tip = tr!("How strongly the layer shows, in the movie and every export. Its artwork fades together, so overlapping parts don't show through each other; a folder fades the layers in it");
+                // A slider to drag and a field to type in, each with its own name.
+                ui.add(egui::Slider::new(&mut d.opacity, 0.0..=100.0).show_value(false)).on_hover_text(tip).set_name(tr!("Layer opacity"));
+                ui.add(egui::DragValue::new(&mut d.opacity).range(0.0..=100.0).suffix(" %").speed(1.0).max_decimals(0)).on_hover_text(tip).set_name(tr!("Layer opacity (percent)"));
+            });
+        }
         form_row(ui, FORM_LABEL_DIALOG, tr!("Layer height"), |ui| {
             egui::ComboBox::from_id_salt("layer_props_height")
                 .width(96.0)
@@ -206,6 +219,7 @@ pub fn changes(d: &LayerPropsDialog) -> Value {
         "outline": d.outline,
         "onion": d.onion,
         "height": u32::from(d.height) * 100,
+        "opacity": (d.opacity.clamp(0.0, 100.0) * 100.0).round() / 100.0,
     });
     let mut now = now;
     // The mask type is a mask layer's (and only sent when it changes).

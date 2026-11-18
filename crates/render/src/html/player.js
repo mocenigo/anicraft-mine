@@ -339,8 +339,17 @@ var AniCraft = (function () {
         }
       }
       if (v && isMask) v.maskBegin(masks, L.mm || 0);
-      const lcx = L.v ? Object.assign({}, cx, { xf: L.v }) : cx;
+      let lcx = L.v ? Object.assign({}, cx, { xf: L.v }) : cx;
+      // A layer below full opacity (ADR 0111) fades as one group, as eval.rs draws it.
+      let faded = null;
+      if (L.o !== undefined && cx.masks === null && !isMask) {
+        faded = dl.groups.length;
+        dl.groups.push({ parent: cx.group, alpha: Math.min(Math.max(L.o, 0), 1), blend: "normal", clip: clip, filters: null, margin: 0 });
+        lcx = Object.assign({}, lcx, { group: faded });
+        if (v) v.groupBegin(faded, dl.groups[faded]);
+      }
       for (const e of L.e) evalElement(M, e, lcx, clip, masks, dl, play, v);
+      if (faded !== null && v) v.groupEnd(faded, dl.groups[faded]);
       if (v && isMask) {
         v.maskEnd(masks, open === masks);
         if (open === masks) open = null;

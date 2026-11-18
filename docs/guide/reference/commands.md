@@ -1,6 +1,6 @@
 # Command reference
 
-Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 364 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
+Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 373 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
 
 This page is generated from the command registry, so it always matches the version of AniCraft it came with.
 
@@ -78,9 +78,9 @@ This page is generated from the command registry, so it always matches the versi
 - **Copy** `edit.copy` · **Ctrl+C** (macOS **⌘C**)
   Parameters: `{} (the selection on every layer, each layer's artwork kept apart)`
 - **Paste in Center** `edit.paste` · **Ctrl+V** (macOS **⌘V**) · changes the document
-  Parameters: `{x?, y?} (centre of the pasted artwork; default: offset 10 px). Artwork copied from one layer lands on the active layer; from several, back on those layers when they are all here, else on the active layer and the ones below it, creating missing ones`
+  Parameters: `{x?, y?, float?: true} (centre of the pasted artwork; default: offset 10 px). With float (as the editor pastes) raw shapes stay whole and selected on top, and go into the drawing when they are deselected or dropped after a move; without it they cut and join what they land on at once. Artwork copied from one layer lands on the active layer; from several, back on those layers when they are all here, else on the active layer and the ones below it, creating missing ones`
 - **Paste in Place** `edit.paste_in_place` · **Ctrl+Shift+V** (macOS **⇧⌘V**) · changes the document
-  Parameters: `{} (layers as edit.paste)`
+  Parameters: `{float?: true} (layers and float as edit.paste)`
 - **Edit Symbols** `symbol.edit` · **Ctrl+E** (macOS **⌘E**)
   Parameters: ``{id?: instance element id, symbol?: library symbol id} opens a symbol's timeline for editing: the instance `id` (default: the selected instance) in place, or a Library symbol at the stage's centre. A group (ADR 0073) or a drawing object (ADR 0080) opens in place the same way: inside, its raw shapes merge only with each other, and a drawing object closes as one object again (a group of its pieces when an edit left several). Every command then works inside it. With nothing to open while a symbol is open, goes back to the document (Animate's Ctrl+E)``
 - **Edit Document** `symbol.exit`
@@ -122,9 +122,9 @@ This page is generated from the command registry, so it always matches the versi
 - **Remove Frame** `timeline.remove_frame` · Insert › Timeline · **Shift+F5** (macOS **⇧F5**) · changes the document
   Parameters: `{layer? | layers?: [..], frame?, count?}`
 - **Keyframe** `timeline.insert_keyframe` · Insert › Timeline · **F6** · changes the document
-  Parameters: `{layer? | layers?: [..], frame?, advance?: true (on a keyframe the new key goes on the next frame, and the playhead moves onto it, as the key does in the editor)}`
+  Parameters: `{layer? | layers?: [..], frame?, count? (every frame of the range becomes a keyframe), advance?: true (on a keyframe the new key goes on the next frame, and the playhead moves onto it, as the key does in the editor)}`
 - **Blank Keyframe** `timeline.insert_blank_keyframe` · Insert › Timeline · **F7** · changes the document
-  Parameters: `{layer? | layers?: [..], frame?, advance?: true (on a keyframe the blank key goes on the next frame instead of clearing it, and the playhead moves onto it)}`
+  Parameters: `{layer? | layers?: [..], frame?, count? (every frame of the range becomes a blank keyframe; keyframes already there are kept), advance?: true (on a keyframe the blank key goes on the next frame instead of clearing it, and the playhead moves onto it)}`
 - **Clear Keyframe** `timeline.clear_keyframe` · Insert › Timeline · **Shift+F6** (macOS **⇧F6**) · changes the document
   Parameters: `{layer? | layers?: [..], frame?, count?}`
 - **Create Motion Tween** `timeline.create_motion_tween` · changes the document
@@ -161,7 +161,7 @@ This page is generated from the command registry, so it always matches the versi
 - **Mask** `layer.toggle_mask` · Modify › Timeline · changes the document
   Parameters: `{layer?}`
 - **Layer Properties** `layer.set_properties` · Modify › Timeline · changes the document
-  Parameters: `{layer?, name?, type?: normal|mask|masked|guide|guided, mask?: coverage|alpha|luminance (a mask layer's mask type), color?, outline?: bool (view as outlines), height?: 100|200|300, visible?, locked?, onion?} sets several at once, as one undo step; answers with the layer's properties`
+  Parameters: `{layer?, name?, type?: normal|mask|masked|guide|guided, mask?: coverage|alpha|luminance (a mask layer's mask type), color?, outline?: bool (view as outlines), height?: 100|200|300, opacity?: 0..100 (percent), visible?, locked?, onion?} sets several at once, as one undo step; answers with the layer's properties`
 - **Remove Camera** `camera.remove` · Modify › Timeline · changes the document
   Parameters: `{} (removes the camera layer and its moves; asks first when the camera is animated)`
 - **Add Warp Mesh** `warp.add` · Modify › Asset Warp · changes the document
@@ -211,13 +211,17 @@ This page is generated from the command registry, so it always matches the versi
 - **Crop** `modify.crop` · Modify › Combine Objects · changes the document
   Parameters: `{} combine with op crop`
 - **Rotate 90° CW** `modify.rotate_cw` · Modify › Transform · **Ctrl+Shift+9** (macOS **⇧⌘9**) · changes the document
-  Parameters: `{}`
+  Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
 - **Rotate 90° CCW** `modify.rotate_ccw` · Modify › Transform · **Ctrl+Shift+7** (macOS **⇧⌘7**) · changes the document
-  Parameters: `{}`
+  Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
 - **Flip Horizontal** `modify.flip_h` · Modify › Transform · changes the document
-  Parameters: `{}`
+  Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
 - **Flip Vertical** `modify.flip_v` · Modify › Transform · changes the document
-  Parameters: `{}`
+  Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
+- **Next Transformation Origin** `modify.transform_origin` · Modify › Transform
+  Parameters: `{mode?: selection|registration|center (default: the next one)} what several selected objects turn, scale and skew about with Free Transform and Modify › Transform: selection (one point for them all, as one arrangement; the default), registration (each about its own point: a symbol instance's or group's registration point, the centre of anything else) or center (each about the centre of its own box). Tool state, not part of the document → {mode}`
+- **Reset Transformation Point** `modify.reset_transformation_point` · Modify › Transform · changes the document
+  Parameters: `{} puts the selected symbol instances' transformation point back at the centre (none kept: tools use the centre of the box, tweens the registration point) → {reset}`
 - **Remove Transform** `modify.remove_transform` · Modify › Transform · **Ctrl+Shift+Z** (macOS **⇧⌘Z**) · changes the document
   Parameters: `{}`
 - **Left** `align.left` · Modify › Align · **Ctrl+Alt+1** (macOS **⌥⌘1**) · changes the document
@@ -240,6 +244,12 @@ This page is generated from the command registry, so it always matches the versi
   Parameters: `{path?: element id of a shape (default: the other selected element, a shape), x?, y? (pick the shape at this stage point instead), offset? (px along the path; default by the text's alignment: its start, middle or end), flip?: bool} sets the selected static text along a copy of the shape's outline (its first contour); the shape stays as it is (ADR 0070)`
 - **Release Text from Path** `text.release_path` · Modify › Text · changes the document
   Parameters: `{} the selected text on a path goes back to lines of text (ADR 0070)`
+- **Convert Lines to Fills** `modify.lines_to_fills` · Modify › Shape · changes the document
+  Parameters: `{id? (default: the selected shapes)} each line becomes a fill of its exact outline in the line's colour: caps, joins, dashes and width profile included. A raw line's fill joins the drawing (it merges with the fills it touches); a drawing object keeps its fill and gets the outline as an object above it → {converted, elements: [ids]}`
+- **Expand Fill…** `modify.expand_fill` · Modify › Shape · changes the document
+  Parameters: `{distance (stage units, above 0 up to 1000), direction?: expand|inset (default expand), id? (default: the selected shapes)} moves each fill's outline out or in by the distance: expanding rounds corners, insetting keeps them; holes shrink as the fill grows; a fill thinner than twice an inset is removed. A drawing object's line follows its new outline → {changed, removed}`
+- **Soften Fill Edges…** `modify.soften_fill_edges` · Modify › Shape · changes the document
+  Parameters: `{distance (the soft edge's width in stage units, above 0 up to 1000), steps? (1..=50 bands, default 4), direction?: expand|inset (default expand: the edge is added round the fill; inset: taken from it), id? (default: the selected shapes)} surrounds each fill with bands of its own paint whose alpha steps down outwards: band i of n has (n + 1 - i) / (n + 1) of the fill's alpha. Colour and gradient fills only → {softened, bands}`
 
 ## Commands
 
@@ -330,13 +340,15 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Rename Layer** `layer.rename` · changes the document
   Parameters: `{name, layer?}`
 - **Show/Hide Layer** `layer.toggle_visible` · changes the document
-  Parameters: `{layer?}`
+  Parameters: `{layer?, on?: bool (default: the other way), all?: true (every layer but the camera, as the eye above the layers: hides them all when all show, else shows them all)}`
 - **Lock/Unlock Layer** `layer.toggle_lock` · changes the document
-  Parameters: `{layer?}`
+  Parameters: `{layer?, on?: bool (default: the other way), all?: true (every layer but the camera, as the padlock above the layers: unlocks them all when all are locked, else locks them all)}`
 - **Outline Layer** `layer.toggle_outline` · changes the document
-  Parameters: `{layer?}`
+  Parameters: `{layer?, on?: bool (default: the other way), all?: true (every layer but the camera, as the square above the layers: back to artwork when all are outlines, else all as outlines)}`
 - **Select Layer** `layer.select`
   Parameters: `{layer: id} or {index}, select?: bool (also select all of its artwork at the playhead, as a click on the layer's name does; nothing on a locked or hidden layer)`
+- **Move Layer To** `layer.move` · changes the document
+  Parameters: `{layer?, before?: layer id | after?: layer id | into?: folder id} moves a layer anywhere in the stack, as a drag in the timeline does; a folder, mask or guide moves with everything in it. before / after: it lands just above that layer, or just below it and whatever it holds, beside it (in the same folder, or under the same mask or guide: normal layers only). into: it becomes the first layer in that folder. None of them: the bottom of the stack, outside every folder`
 - **Layer Type** `layer.set_type` · changes the document
   Parameters: `{type: normal|mask|masked|guide|guided, layer?}`
 - **Onion Skin Layer** `layer.set_onion` · changes the document
@@ -345,10 +357,12 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{color: "#rrggbb", layer?} the layer's colour: its outlines in outline mode and its bar on the timeline`
 - **Layer Height** `layer.set_height` · changes the document
   Parameters: `{height: 100 | 200 | 300 (percent of a normal row), layer?} the layer's row height on the timeline`
+- **Layer Opacity** `layer.set_opacity` · changes the document
+  Parameters: `{opacity: 0..100 (percent), layer?} how strongly the layer shows, in the movie and every export: its artwork is drawn together and then faded, so its overlapping parts don't show through each other. A folder's opacity fades the layers in it; mask and guide artwork ignore it (ADR 0111) → {layer, opacity}`
 - **Mask Type** `layer.set_mask` · changes the document
   Parameters: `{mask: coverage|alpha|luminance, layer?} how a mask layer reveals the layers it masks: coverage (its fills' area), alpha (its artwork's opacity: gradients and faded shapes make soft edges) or luminance (its brightness: white shows, black hides; SVG's mask) (ADR 0070)`
 - **Get Layer Properties** `layer.properties`
-  Parameters: `{layer?} the layer's name, type, mask type (mask layers), colour, outline, height (percent), visible, locked and onion`
+  Parameters: `{layer?} the layer's name, type, mask type (mask layers), colour, outline, height (percent), opacity (percent), visible, locked and onion`
 - **Camera** `camera.set` · changes the document
   Parameters: `{x?, y? (camera centre, stage px), dx?, dy? (pan by), zoom? (%, 5–2000), zoom_by? (factor), rotation? (°), rotate_by? (°), reset?: bool, frame?, and the colour effect as element.set_color_effect takes it: style?: none|brightness|tint|advanced, brightness? (%), tint? (#rrggbb), tint_amount? (%), red_multiplier? … blue_offset? (the camera has no opacity: no alpha values)}`
 - **Camera Info** `camera.info`
@@ -498,11 +512,11 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Move** `element.translate` · changes the document
   Parameters: ``{dx, dy, snap?, from?: [x, y]} moves the selection, on every layer; with `snap` (a distance) one of its corners or ends, or its box's corners or centre (the nearest to `from`), then snaps within that distance by the snap engine's priority (ADR 0076): a point, guide, line or fill edge of the rest, the grid, a whole pixel``
 - **Transform** `element.set_transform` · changes the document
-  Parameters: `{x?, y?, sx?, sy?, rotation? (degrees)}`
+  Parameters: `{x?, y?, sx?, sy?, rotation? (degrees)} x and y place the registration point. A new scale or rotation alone is applied about a symbol instance's transformation point when it has one (modify.transformation_point), else about the registration point`
 - **Fill Colour** `element.set_fill` · changes the document
-  Parameters: `{color: "#rrggbb" | "#rrggbbaa" | null} (the alpha is the fill's own; 00 is a clear fill, not the same as null)`
+  Parameters: `{color: "#rrggbb" | "#rrggbbaa" | null, or on: true | false} (the alpha is the fill's own; 00 is a clear fill, not the same as null. on: false turns the fill off like null; on: true puts back the fill each shape had before, else the tool's fill colour. With only raw lines selected the fill goes to what they surround)`
 - **Stroke** `element.set_stroke` · changes the document
-  Parameters: `{color?: "#rrggbb" | "#rrggbbaa" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}`
+  Parameters: `{on?: true | false (false removes the stroke like color: null; true puts back the stroke each shape had before, else the tool's), color?: "#rrggbb" | "#rrggbbaa" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}`
 - **Alpha** `element.set_alpha` · changes the document
   Parameters: `{alpha: 0..1} sets the alpha multiplier and keeps the rest of the colour effect (None becomes Alpha; Brightness and Tint become Advanced below 1)`
 - **Colour Effect** `element.set_color_effect` · changes the document
@@ -556,7 +570,9 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Select Connected** `element.select_connected`
   Parameters: `{x, y, add?, slop?} a raw stroke and the strokes joined to it, or a raw fill and the strokes on and in it`
 - **Transform** `modify.transform` · changes the document
-  Parameters: `{a, b, c, d, e, f} affine applied in stage space (free transform), to the selection on every layer`
+  Parameters: `{a, b, c, d, e, f, origin?: selection|registration|center (default selection)} affine applied in stage space (free transform), to the selection on every layer. With origin registration or center, the matrix's scale, rotation and skew are applied to each selected object about its own point instead (see modify.transform_origin) and its move (e, f) is left out`
+- **Set Transformation Point** `modify.transformation_point` · changes the document
+  Parameters: `{x, y} (stage space, as modify.transform) moves the selected symbol instances' transformation point there (the white circle Free Transform shows): what each then turns, scales and skews about with Free Transform, the Modify › Transform commands, the Properties fields and in tweens. It is kept with the instance, in the instance's own space, so it travels with it. Anything else has no point of its own to keep (ADR 0111) → {set, x, y}`
 - **Pen Path** `draw.path` · changes the document
   Parameters: `{d: SVG path data (stage space), fill?, stroke?, stroke_width?, object?}`
 - **Pencil Stroke** `draw.freehand` · changes the document
@@ -709,6 +725,8 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{x, y, id? (default: the topmost stroke there on the active layer), slop?}`
 - **Stroke Style** `stroke.set_style` · changes the document
   Parameters: `{cap?: none|round|square, join?: miter|round|bevel, miter? (limit, 1..=100; a corner whose point is longer than this many widths is bevelled), style?: solid|dashed|dotted, dash? ([on, off, ..] lengths in the shape's units; implies dashed), dash_offset?, dot_spacing? (between dots, edge to edge; implies dotted), id? (default: the selected shapes)}`
+- **Sample Colour** `paint.sample`
+  Parameters: `{x, y, scale? (the view's zoom, 0.01..=64, default 1: the colour of one screen pixel there)} the colour drawn at a point of what is being edited, over the stage colour: fills, gradients, bitmaps, lines, symbols and effects alike, as the CPU renderer draws them (the colour picker's eyedropper, #288) → {color: "#rrggbb", r, g, b}`
 - **Run Plug-in** `plugin.run` · changes the document
   Parameters: `{id, params?: {…} (see plugin.list; missing ones take their defaults)} one undo step`
 - **Remove Plug-in** `plugin.remove`

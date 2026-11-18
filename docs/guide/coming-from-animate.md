@@ -45,7 +45,7 @@ Each tool has the key you already know.
 |---|---|---|
 | Selection | **V** | Selects raw strokes and fills with the dot pattern; drag an edge to bend it. |
 | Subselection | **A** | Points and handles, on raw drawings and drawing objects. |
-| Free Transform | **Q** | Scale, skew (drag the line between two handles), rotate and move; Shift and Alt as you'd expect. |
+| Free Transform | **Q** | Scale, skew (drag the line between two handles), rotate and move; Shift and Alt as you'd expect. Drag the white circle to move the transformation point, double-click it to centre it; a rotated instance's box turns with it. |
 | Gradient Transform | **F** | Its own button (no flyouts yet). Gradient and bitmap fills, with Lock Fill. |
 | Width | **U** | Variable-width strokes, with profiles in Properties. |
 | Bone | **M** | Joins symbol instances into an armature, or draws bones inside a shape. |

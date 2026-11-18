@@ -53,7 +53,7 @@ pub(crate) fn parts() -> Session {
         let shape = Shape { merge: true, ..Shape::filled(path, Paint::Solid(Rgba::hex(color))) };
         Arc::new(Element { id: ElementId(id), name: String::new(), transform: Affine::translate(x, y), color: ColorEffect::default(), kind: ElementKind::Shape(shape) })
     };
-    let inst = Arc::new(Element { id: ElementId(HEAD), name: String::new(), transform: Affine::translate(200.0, 110.0), color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: head, loop_mode: LoopMode::Loop, first_frame: 0, blend: BlendMode::Normal, filters: Vec::new(), events: Vec::new() } });
+    let inst = Arc::new(Element { id: ElementId(HEAD), name: String::new(), transform: Affine::translate(200.0, 110.0), color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: head, loop_mode: LoopMode::Loop, first_frame: 0, blend: BlendMode::Normal, filters: Vec::new(), events: Vec::new(), pivot: None } });
     let l = Arc::make_mut(&mut d.timeline_mut(0).layers[0]);
     l.keyframes = vec![Arc::new({
         let mut k = Keyframe::new(0, 20);

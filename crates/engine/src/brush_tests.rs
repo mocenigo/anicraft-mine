@@ -369,3 +369,55 @@ fn a_pressured_paint_brush_line_is_raw_now() {
     assert_eq!(all.len(), 1);
     assert!(all[0].0.merge && all[0].0.stroke.as_ref().is_some_and(|st| st.profile.is_some()));
 }
+
+/// A small deterministic generator for the stroke fuzz below.
+struct Lcg(u64);
+impl Lcg {
+    fn next(&mut self) -> f32 {
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((self.0 >> 40) as f32) / ((1u64 << 24) as f32)
+    }
+}
+
+/// About one turn (6.28 exactly, not τ: the seeds below were found with it).
+const TURN: f32 = 157.0 / 25.0;
+
+/// A hand-like stroke: a wobbly curve between two random points.
+fn wobbly(r: &mut Lcg, n: usize) -> Vec<[f32; 2]> {
+    let (x0, y0, x1, y1) = (60.0 + r.next() * 380.0, 60.0 + r.next() * 280.0, 60.0 + r.next() * 380.0, 60.0 + r.next() * 280.0);
+    let (amp, waves, phase) = (5.0 + r.next() * 40.0, 0.5 + r.next() * 2.5, r.next() * TURN);
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    (0..=n)
+        .map(|i| {
+            let t = i as f32 / n as f32;
+            let w = amp * (t * waves * TURN + phase).sin();
+            [x0 + dx * t - dy / len * w, y0 + dy * t + dx / len * w]
+        })
+        .collect()
+}
+
+/// #308: brush strokes that cross earlier ones never make the earlier drawing disappear. Each
+/// scenario paints seven wobbly strokes of one colour in merge drawing, and the same strokes as
+/// separate objects for reference: wherever the reference is painted along a stroke's centre,
+/// the merged drawing is too (a point or two may differ where a thin stroke's edge moves by the
+/// snapping distance). Before the planarity check in the merge, four of these 120 scenarios
+/// lost most or all of the drawing (the last one every stroke).
+#[test]
+fn crossing_brush_strokes_keep_what_was_drawn() {
+    for seed in (0..116u64).chain([196, 218, 354, 28]) {
+        let mut r = Lcg(seed * 7919 + 13);
+        let (mut s, mut reference) = (blank(false), blank(true));
+        let size = [3.0, 5.0, 8.0, 14.0][(seed % 4) as usize];
+        let mut drawn: Vec<[f32; 2]> = Vec::new();
+        for k in 0..7 {
+            let pts = wobbly(&mut r, 40);
+            let p = json!({"points": pts, "size": size, "color": RED});
+            run(&mut s, "draw.brush", p.clone());
+            run(&mut reference, "draw.brush", p);
+            drawn.extend(pts.iter().copied());
+            let lost = drawn.iter().map(|p| Vec2::new(p[0], p[1])).filter(|&p| top_at(&reference, p).is_some() && top_at(&s, p).is_none()).count();
+            assert!(lost <= 2, "seed {seed}, size {size}, stroke {k}: {lost} of {} painted points are gone", drawn.len());
+        }
+    }
+}

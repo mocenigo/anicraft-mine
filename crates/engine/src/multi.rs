@@ -450,7 +450,7 @@ fn paste_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let mut items = Vec::new();
     let mut keyframes: HashSet<(LayerId, u32)> = HashSet::new();
     for (layer, start, c) in plan {
-        let (fresh, _) = at_keyframe(s, layer, start, |s| crate::cmds_modify::paste_layer(s, &c.elements, Vec2::ZERO))?;
+        let (fresh, _) = at_keyframe(s, layer, start, |s| crate::cmds_modify::paste_layer(s, &c.elements, Vec2::ZERO, false))?;
         keyframes.insert((layer, start));
         items.extend(fresh.into_iter().map(|element| FrameItem { layer, frame: start, element }));
     }

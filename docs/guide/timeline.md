@@ -37,7 +37,9 @@ wheel.
   Layer**. It goes above the active layer.
 * **Delete a layer**: select it and click the delete button under the list, or choose
   **Modify › Timeline › Delete Layer**. Undo brings it back.
-* **Reorder layers**: use the up and down buttons under the list, or **Modify › Timeline › Move
+* **Reorder layers**: drag a layer by its name to where you want it. A line shows where it
+  will land; **Esc** cancels the drag. A folder, a mask or a guide moves with everything in it.
+  From the keyboard, use the up and down buttons under the list, or **Modify › Timeline › Move
   Layer Up** and **Move Layer Down**.
 * **Rename a layer**: double-click its name, or right-click it and choose **Rename Layer**.
 
@@ -56,6 +58,15 @@ Each layer row has three toggles:
 Outlines are a working aid only. They show on the stage, but Test Movie and every export draw
 the artwork as it really is.
 
+The eye, the padlock and the square **above the layer names** act on every layer at once, as in
+Animate: one click hides, locks or outlines them all, and the next click brings them all back.
+When only some layers are hidden (or locked, or outlined), the first click makes them all alike.
+The camera layer is left alone.
+
+To give the frames more room, drag the line between the layer names and the frames to the left
+(or to the right for long layer names). Double-click the line to put it back. AniCraft remembers
+the width.
+
 ### Layer colours
 
 Every layer has a colour, used for its outlines and its bar on the timeline. Click the thin
@@ -72,8 +83,22 @@ row taller. This is handy for layers you work on a lot, or for seeing sound wave
 Double-click a layer's icon (or right-click it and choose **Properties…**, or choose **Modify ›
 Timeline › Layer Properties**) to open the Layer Properties window. Here you can set, all at
 once, the layer's name, whether it shows and is locked, its type (Normal, Mask, Masked, Guide
-or Guided), its outline colour, outlines, onion skin and height. **OK** applies everything as
-one undo step; **Cancel** changes nothing.
+or Guided), its outline colour, outlines, onion skin, opacity and height. **OK** applies
+everything as one undo step; **Cancel** changes nothing.
+
+### Layer opacity
+
+**Opacity** in Layer Properties sets how strongly a layer shows, from 0 to 100 %. For the usual
+values, right-click the layer and choose **Opacity** › **100 %**, **75 %**, **50 %**, **25 %**
+or **0 %**. A faded layer shows its percentage beside its name.
+
+The layer fades **as one**: its artwork is drawn together first, so where two of its shapes
+overlap you don't see one through the other. A folder's opacity fades every layer in it, on
+top of each layer's own. Mask and guide layers ignore it.
+
+Layer opacity is part of your movie: you see it on the stage, in Test Movie and in every
+export. (Animate's *Transparent* layer setting is only a view while you work; to see through
+a layer while tracing without changing the movie, use **View as Outlines** instead.)
 
 Layer Properties works on one layer at a time. Editing several layers at once isn't there yet.
 
@@ -83,8 +108,9 @@ Folders keep big timelines tidy.
 
 1. Click the folder button under the layer list, or choose **Insert › Timeline › New Folder**.
    The folder appears above the active layer.
-2. Select a layer and use the up and down buttons to move it in under the folder. Moving a layer
-   off either end of the folder takes it out again.
+2. Drag a layer by its name onto the folder to put it inside, or between two layers of an open
+   folder. Drag it above or below a layer outside the folder to take it out again. (With the up
+   and down buttons: move a layer in under the folder, and off either end to take it out.)
 3. Click the folder's chevron to open or close it.
 
 Hiding or locking a folder hides or locks everything inside it. Folders can nest, and a folder
@@ -126,6 +152,10 @@ As in Animate, the keys keep you moving along the timeline:
   layer you're on up to it.
 * With a frame selected, the keys act on that frame's layer, and the selection moves with the
   playhead.
+* With several frames selected, **F6** makes every one of them a keyframe of what it showed, and
+  **F7** makes every one a blank keyframe, on each selected layer: select a stretch of frames
+  and press **F7** to set up frame-by-frame drawing. Keyframes already in the range keep their
+  drawings.
 
 An empty frame shows a hint in **Properties › Frame**: press **F7** to start drawing there.
 
@@ -141,9 +171,11 @@ Removing or clearing frames that hold artwork asks first.
 
 ### Moving keyframes and resizing spans
 
-* **Move keyframes**: drag selected keyframes left or right in time, or up and down onto other
-  layers. An outline shows where they will land. Keys they land on are replaced, and the source
-  keeps empty frames, as in Animate.
+* **Move keyframes**: click a keyframe to select it (or select a range), then drag it left or
+  right in time, or up and down onto other layers, as in Animate. Over selected keyframes the
+  pointer is a hand, to show they can be dragged; an outline shows where they will land. Keys
+  they land on are replaced, and the source keeps empty frames. **Alt**-drag copies a tween
+  span. A drag that starts on a frame that isn't selected selects a range instead.
 * **Change a span's length**: drag the end of a span. The pointer turns into a resize cursor,
   and a label shows the length in frames and seconds. Later frames move with it.
 

@@ -66,6 +66,7 @@ pub enum Dialog {
     FindReplace,
     BrushLibrary,
     ConvertSymbol,
+    ShapeEdges,
     LayerProperties,
     EditGrid,
     EditGuides,
@@ -86,7 +87,7 @@ pub enum Dialog {
 }
 
 impl Dialog {
-    pub const ALL: [Dialog; 27] = [
+    pub const ALL: [Dialog; 28] = [
         Dialog::Preferences,
         Dialog::Shortcuts,
         Dialog::Licenses,
@@ -97,6 +98,7 @@ impl Dialog {
         Dialog::FindReplace,
         Dialog::BrushLibrary,
         Dialog::ConvertSymbol,
+        Dialog::ShapeEdges,
         Dialog::LayerProperties,
         Dialog::EditGrid,
         Dialog::EditGuides,
@@ -129,6 +131,7 @@ impl Dialog {
             Dialog::FindReplace => "find_replace",
             Dialog::BrushLibrary => "brush_library",
             Dialog::ConvertSymbol => "convert_symbol",
+            Dialog::ShapeEdges => "shape_edges",
             Dialog::LayerProperties => "layer_props",
             Dialog::EditGrid => "edit_grid",
             Dialog::EditGuides => "edit_guides",
@@ -159,6 +162,7 @@ impl Dialog {
             Dialog::FindReplace => "workspace.md#find-and-replace",
             Dialog::BrushLibrary => "drawing.md#the-brush",
             Dialog::ConvertSymbol => "symbols-and-library.md#making-a-symbol",
+            Dialog::ShapeEdges => "drawing.md#lines-to-fills-expanding-and-softening-fills",
             Dialog::LayerProperties => "timeline.md#layer-properties",
             Dialog::EditGrid | Dialog::EditGuides => "drawing.md#rulers-grid-and-guides",
             Dialog::Plugins => "plugins.md#managing-plug-ins",
@@ -213,6 +217,9 @@ pub const COMMAND_TOPICS: &[(&str, &str)] = &[
     ("macro.", "saved-commands.md#saving-steps-as-a-command"),
     ("modify.", "drawing.md#transforming-artwork"),
     ("modify.convert_to_symbol", "symbols-and-library.md#making-a-symbol"),
+    ("modify.expand_fill", "drawing.md#lines-to-fills-expanding-and-softening-fills"),
+    ("modify.lines_to_fills", "drawing.md#lines-to-fills-expanding-and-softening-fills"),
+    ("modify.soften_fill_edges", "drawing.md#lines-to-fills-expanding-and-softening-fills"),
     ("motion.", "tweens.md#motion-tweens"),
     ("paint.", "drawing.md#paint-bucket-ink-bottle-and-eyedropper"),
     ("path.", "drawing.md#editing-points-with-subselection"),
@@ -326,6 +333,10 @@ pub fn subject(app: &App, ctx: &egui::Context, pointer: bool) -> Subject {
     }
     if app.convert.is_some() {
         return Subject::Dialog(Dialog::ConvertSymbol);
+    }
+    // Expand Fill and Soften Fill Edges (ADR 0109).
+    if app.shape_dialog.is_some() {
+        return Subject::Dialog(Dialog::ShapeEdges);
     }
     if app.plugin_dialog.is_some() {
         return Subject::Dialog(Dialog::PluginSettings);

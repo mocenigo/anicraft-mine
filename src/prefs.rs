@@ -129,6 +129,9 @@ pub struct Prefs {
     pub timeline_start_gap: f32,
     /// Frame view › Short (ADR 0061): timeline rows at their short height.
     pub timeline_short_rows: bool,
+    /// How wide the timeline's layer column is, in points: the line between the layers and
+    /// the frames drags (#384). A narrow dock still takes what it needs for the frames.
+    pub timeline_layer_w: f32,
     /// Keyboard shortcuts the user changed: action id → its full list of keys (empty =
     /// unbound). Actions not listed keep their defaults (`keymap`).
     pub shortcuts: std::collections::BTreeMap<String, Vec<String>>,
@@ -151,6 +154,12 @@ pub struct Prefs {
     /// Brushes of your own (ADR 0068), for the Brush and the Paint Brush.
     #[serde(deserialize_with = "lenient_brushes")]
     pub brushes: anicraft_engine::brush_library::BrushLibrary,
+    /// The Brush's and the Paint Brush's settings as they were left (#331): size, tip,
+    /// smoothing, pressure and the rest come back with the next start. None until changed.
+    #[serde(deserialize_with = "lenient_brush")]
+    pub brush_tool: Option<anicraft_engine::brush_library::BrushPreset>,
+    #[serde(deserialize_with = "lenient_brush")]
+    pub paint_brush_tool: Option<anicraft_engine::brush_library::BrushPreset>,
     /// Filter presets of your own (ADR 0091), for movie clips and buttons in any document.
     #[serde(deserialize_with = "lenient_filter_presets")]
     pub filter_presets: anicraft_engine::filter_library::FilterLibrary,
@@ -232,6 +241,7 @@ impl Default for Prefs {
             native_dialogs: true,
             timeline_start_gap: 0.0,
             timeline_short_rows: false,
+            timeline_layer_w: LAYER_W_DEFAULT,
             shortcuts: Default::default(),
             autosave: true,
             autosave_secs: 60,
@@ -241,6 +251,8 @@ impl Default for Prefs {
             recent: Default::default(),
             start_screen: true,
             brushes: Default::default(),
+            brush_tool: None,
+            paint_brush_tool: None,
             filter_presets: Default::default(),
             filter_presets_hidden: Vec::new(),
             test_movie_window: true,
@@ -266,6 +278,13 @@ fn lenient_recent<'de, D: serde::Deserializer<'de>>(d: D) -> Result<anicraft_eng
     };
     let good: Vec<RecentFile> = list.into_iter().filter_map(|x| serde_json::from_value::<RecentFile>(x).ok()).collect();
     Ok(serde_json::from_value::<RecentFiles>(serde_json::to_value(good).unwrap_or_default()).unwrap_or_default())
+}
+
+/// A tool's brush settings as written, values clamped; anything that isn't settings is none
+/// (a hand-edited file), and the tool starts with its defaults.
+fn lenient_brush<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<anicraft_engine::brush_library::BrushPreset>, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value::<anicraft_engine::brush_library::BrushPreset>(v).ok().map(anicraft_engine::brush_library::BrushPreset::sanitized))
 }
 
 /// Your brushes as written, skipping entries that aren't one (a hand-edited file).
@@ -295,6 +314,10 @@ pub const AUTOSAVE_EDITS_RANGE: std::ops::RangeInclusive<u32> = 0..=1000;
 
 pub const SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.75..=2.0;
 pub const GAP_RANGE: std::ops::RangeInclusive<f32> = 0.0..=48.0;
+/// The timeline's layer column: its width until dragged, and how narrow and wide it goes (the
+/// toggles stay whole at the narrowest; names are cut short).
+pub const LAYER_W_DEFAULT: f32 = 252.0;
+pub const LAYER_W_RANGE: std::ops::RangeInclusive<f32> = 150.0..=600.0;
 
 impl Prefs {
     /// Whether the theme follows the system ("Follow system", the default): its contrast setting
@@ -330,6 +353,7 @@ impl Prefs {
     pub fn sanitized(mut self) -> Prefs {
         self.ui_scale = if self.ui_scale.is_finite() { self.ui_scale.clamp(*SCALE_RANGE.start(), *SCALE_RANGE.end()) } else { 1.0 };
         self.timeline_start_gap = if self.timeline_start_gap.is_finite() { self.timeline_start_gap.clamp(*GAP_RANGE.start(), *GAP_RANGE.end()) } else { 0.0 };
+        self.timeline_layer_w = if self.timeline_layer_w.is_finite() { self.timeline_layer_w.clamp(*LAYER_W_RANGE.start(), *LAYER_W_RANGE.end()) } else { LAYER_W_DEFAULT };
         for f in [&mut self.ui_font, &mut self.data_font] {
             if let FontChoice::System(name) = f
                 && (name.trim().is_empty() || name.len() > 256)
