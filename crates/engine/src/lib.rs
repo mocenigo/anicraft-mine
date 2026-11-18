@@ -11,6 +11,7 @@ mod cmds_bone;
 mod cmds_warp;
 pub mod cmds_brush;
 mod cmds_camera;
+mod parenting;
 mod cmds_draw;
 pub mod cmds_filter;
 pub mod cmds_ease;
@@ -73,7 +74,9 @@ pub mod player;
 pub mod publish;
 pub mod vfs;
 
-use anicraft_doc::{DisplayList, Document, Element, ElementId, ElementKind, Keyframe, Layer, LayerId, LayerKind, evaluate_layer_elements, evaluate_scene};
+use anicraft_doc::{DisplayList, Document, Element, ElementId, ElementKind, Keyframe, Layer, LayerId, LayerKind, evaluate_scene};
+#[cfg(test)]
+use anicraft_doc::evaluate_layer_elements;
 use anicraft_geom::{Affine, Rect, Vec2};
 use serde_json::{Value, json};
 use history::History;
@@ -153,6 +156,7 @@ pub fn commands() -> Vec<CommandSpec> {
     v.extend(cmds_timeline::specs());
     v.extend(cmds_layer::specs());
     v.extend(cmds_camera::specs());
+    v.extend(parenting::specs());
     v.extend(cmds_bone::specs());
     v.extend(cmds_warp::specs());
     v.extend(cmds_motion::specs());
@@ -407,6 +411,11 @@ pub struct Session {
     pub ease_clipboard: Option<anicraft_doc::Easing>,
     /// A command is editing a motion tween's target (auto-key, ADR 0016).
     motion_edit: Option<cmds_motion::MotionEdit>,
+    /// Layer parenting (ADR 0113): the layer spaces the running command started with, the
+    /// keyframes it was handed in stage space, and the layers whose parent it set itself.
+    rig_cmd: Option<parenting::RigCmd>,
+    rig_edits: Vec<parenting::RigEdit>,
+    pub(crate) rig_handled: Vec<LayerId>,
     /// Installed WebAssembly plug-ins (ADR 0017). They belong to the session, not the
     /// document: they survive New and Open.
     pub plugins: anicraft_plugins::Registry,
@@ -556,6 +565,9 @@ impl Session {
             frame_clipboard: cmds_frames::FrameClipboard::default(),
             ease_clipboard: None,
             motion_edit: None,
+            rig_cmd: None,
+            rig_edits: Vec::new(),
+            rig_handled: Vec::new(),
             plugins: anicraft_plugins::Registry::default(),
             step_label: None,
             provisional: None,
@@ -749,14 +761,18 @@ impl Session {
         self.motion_edit = None;
         self.step_label = None;
         self.record_as = None;
+        // Layers that follow a parent layer are edited in stage space (ADR 0113).
+        let rig = self.rig_begin();
         let result = (spec.run)(self, params);
         let record_as = self.record_as.take();
+        self.settle_rig();
         // Edits to a motion tween's target become property keys (auto-key).
         if let Some(edit) = self.motion_edit.take()
             && result.is_ok()
         {
             cmds_motion::finish_edit(self, edit);
         }
+        self.rig_end(rig);
         self.dl_cache.replace(None);
         if let Some(label) = self.step_label.take() {
             before.label = label;
@@ -944,12 +960,18 @@ impl Session {
         // Each command's edits to a motion tween's target become its keys, as when it runs on
         // its own (the next one may work at another frame).
         let outer = self.motion_edit.take();
+        // What the outer command edited in stage space settles first: this one sees the
+        // document as it is (ADR 0113).
+        self.settle_rig();
+        let rig = self.rig_begin();
         let result = (spec.run)(self, params);
+        self.settle_rig();
         if let Some(edit) = self.motion_edit.take()
             && result.is_ok()
         {
             cmds_motion::finish_edit(self, edit);
         }
+        self.rig_end(rig);
         self.motion_edit = outer;
         self.dl_cache.replace(None);
         self.pending_cut = None;
@@ -1091,7 +1113,7 @@ impl Session {
     /// Elements on the active layer at the playhead (tweens applied). Shares the document's
     /// element `Arc`s on non-tweened frames.
     pub fn visible_elements(&self) -> Vec<Arc<Element>> {
-        self.active_layer().and_then(|l| evaluate_layer_elements(l, self.frame)).map(|(_, e)| e.into_owned()).unwrap_or_default()
+        self.elements_on(self.layer)
     }
 
     /// Topmost element under `p` (stage space) on a visible, unlocked layer. A bounding-box
@@ -1163,6 +1185,11 @@ impl Session {
     /// refused there.
     pub(crate) fn editable_keyframe_in(&mut self, what: KeyEdit) -> Result<&mut Keyframe> {
         let frame = self.frame;
+        // A layer that follows a parent layer is edited as the stage shows it (ADR 0113).
+        if let Some(e) = self.rig_blocked(self.layer) {
+            return Err(e);
+        }
+        let space = self.layer_space(self.layer);
         let tl = self.timeline();
         if let Some(l) = tl.layer(self.layer) {
             if l.kind == LayerKind::Folder {
@@ -1204,6 +1231,7 @@ impl Session {
         {
             self.motion_edit = Some(edit);
         }
+        Session::rig_conjugate(&mut self.rig_edits, lid, frame, space, kf);
         Ok(kf)
     }
 
@@ -1344,6 +1372,9 @@ pub fn element_label(doc: &Document, e: &Element) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod parenting_tests;
 
 #[cfg(test)]
 mod motion_tests;

@@ -474,7 +474,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // In a narrow dock (ADR 0087) the layer column gives up width to keep a strip of frames;
     // the layers' toggles stay whole and their names are cut short.
     // Its width is the user's (the line between the layers and the frames drags, #384).
-    let layer_w = app.tl_layer_w_drag.unwrap_or(app.prefs.timeline_layer_w).min(body.width() - MIN_FRAMES_W).max(MIN_LAYER_W);
+    // The parenting view's column (ADR 0113) is added to it while open, so names keep their room.
+    let parent_w = if app.prefs.timeline_parenting { crate::parenting::Column::width(app.s.timeline()) } else { 0.0 };
+    let layer_w = (app.tl_layer_w_drag.unwrap_or(app.prefs.timeline_layer_w) + parent_w).min(body.width() - MIN_FRAMES_W).max(MIN_LAYER_W);
     let grid = Rect::from_min_max(pos2(body.left() + layer_w, body.top()), body.right_bottom());
     let frames_total = app.s.frame_count();
     app.tl_cell_w = app.tl_cell_w.clamp(*CELL_RANGE.start(), *CELL_RANGE.end());
@@ -578,7 +580,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ruler = Rect::from_min_max(grid.left_top(), pos2(grid.right(), grid.top() + RULER_H));
     painter.rect_filled(ruler, 0.0, T.panel_alt);
     painter.rect_filled(Rect::from_min_max(body.left_top(), pos2(grid.left(), ruler.bottom())), 0.0, T.panel_alt);
-    painter.text(pos2(body.left() + 10.0, ruler.center().y), Align2::LEFT_CENTER, tr!("Layers"), font(Type::Heading), color(Type::Heading));
+    let heading = painter.text(pos2(body.left() + 10.0, ruler.center().y), Align2::LEFT_CENTER, tr!("Layers"), font(Type::Heading), color(Type::Heading));
+    // The parenting view's toggle sits beside the heading, as in Animate (ADR 0113).
+    {
+        let side = TOGGLE.min(RULER_H);
+        crate::parenting::head_toggle(app, ui, &painter, Rect::from_center_size(pos2(heading.right() + 8.0 + side * 0.5, ruler.center().y), vec2(side, side)));
+    }
     // The eye, the padlock and the square above the columns they head show, lock or outline
     // every layer at once, as in Animate (#422). Each shows its other face once every layer
     // is that way, and the next click brings them all back.
@@ -678,6 +685,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let rows_top = ruler.bottom();
     let rows_bottom = body.bottom() - FOOTER_H;
     let tl_now = app.s.timeline().clone();
+    // The parenting view (ADR 0113): a column of dots left of the toggles, the same place on
+    // every row (a row has at most six toggles).
+    let parent_col = app.prefs.timeline_parenting.then(|| {
+        // Left of the leftmost toggle any row of this timeline has: eye, lock, outline and onion,
+        // a speaker when a layer has sounds, the camera's attach toggle when there is a camera.
+        let most = 3.0 + f32::from(u8::from(tl_now.layers.iter().any(|l| l.has_sounds()))) + f32::from(u8::from(tl_now.camera_layer().is_some() && app.s.editing.is_empty()));
+        crate::parenting::Column::new(&tl_now, grid.left() - 16.0 - most * (TOGGLE + 2.0) - TOGGLE * 0.5 - 4.0)
+    });
+    let mut parent_dots: Vec<crate::parenting::Dot> = Vec::new();
     let mut next_y = rows_top;
     // Where each row is, for files dropped on a layer's frame (ADR 0065).
     let mut drop_rows = Vec::new();
@@ -788,7 +804,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         } else {
             painter.rect_filled(sw, 0.0, to_color32(layer.color));
         }
-        let name_rect = Rect::from_min_max(left.left_top(), pos2(attach_t.or(speaker).or(onion_t).unwrap_or(eye).left() - 4.0, left.bottom()));
+        let name_end = match parent_col {
+            Some(col) => col.left - 2.0,
+            None => attach_t.or(speaker).or(onion_t).unwrap_or(eye).left() - 4.0,
+        };
+        let name_rect = Rect::from_min_max(left.left_top(), pos2(name_end.max(left.left() + 8.0), left.bottom()));
+        if let Some(col) = parent_col {
+            // The name gives way to the column: what is under it is painted over.
+            let until = attach_t.or(speaker).or(onion_t).unwrap_or(eye).left() - 1.0;
+            painter.rect_filled(Rect::from_min_max(pos2(col.left - 2.0, left.top()), pos2(until.max(col.right), left.bottom())), 0.0, if is_active { T.accent_dim } else if r % 2 == 0 { T.panel } else { T.panel_alt });
+            parent_dots.extend(crate::parenting::row(app, ui, &tl_now, layer, col, left.center().y, tg));
+        }
         // The name is the row's handle too: drag it to move the layer (#407). The camera stays
         // on top.
         let nr = ui.interact(name_rect, ui.id().with(("lname", layer.id.0)), if layer.kind == LayerKind::Camera { Sense::click() } else { Sense::click_and_drag() });
@@ -967,6 +993,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if ui.button(tr!("Properties…")).clicked() {
                 crate::layer_props::open(app, Some(layer.id));
                 ui.close();
+            }
+            // Layer parenting (ADR 0113): the layer follows the object on its parent layer.
+            if layer.can_follow() {
+                ui.menu_button(tr!("Parent"), |ui| crate::parenting::menu(app, ui, layer.id));
             }
             ui.separator();
             // Layer type, as check items: Mask (masks the layer below) and Masked.
@@ -1412,6 +1442,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
         painter.line_segment([row.left_bottom(), row.right_bottom()], Stroke::new(1.0, T.separator));
     }
+    // The parenting view's tree, and a dot being dragged to its new parent (ADR 0113).
+    if parent_col.is_some() {
+        let list = Rect::from_min_max(pos2(body.left(), rows_top), pos2(grid.left(), rows_bottom));
+        crate::parenting::finish(app, ui, &painter, &tl_now, &parent_dots, &drop_rows, list);
+    } else {
+        app.tl_parent_drag = None;
+    }
+    app.tl_parent_dots = parent_dots;
     // A layer dragged by its name (#407): a line shows where it will land, a folder lights up
     // when it goes inside. Released there it moves in one undo step; Esc, or a release away
     // from the layers, leaves it where it was.
@@ -1501,7 +1539,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         if sr.dragged()
             && let Some(p) = sr.interact_pointer_pos()
         {
-            app.tl_layer_w_drag = Some((p.x - body.left()).clamp(*range.start(), *range.end()));
+            app.tl_layer_w_drag = Some((p.x - body.left() - parent_w).clamp(*range.start(), *range.end()));
         }
         let set = if sr.double_clicked() {
             app.tl_layer_w_drag = None;

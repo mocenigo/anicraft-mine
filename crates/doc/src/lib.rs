@@ -8,6 +8,7 @@ pub use anicraft_audio as audio;
 pub use anicraft_actions as actions;
 
 pub mod aids;
+pub mod parenting;
 pub mod armature;
 pub mod spring;
 pub mod skin;
@@ -47,6 +48,7 @@ pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, W
 pub use stroke_style::{Cap, Dash, DashKind, Join, StrokeStyle};
 pub use camera::{Camera, DepthKey};
 pub use swatch::{MAX_SWATCHES, Swatch, SwatchPaint};
+pub use parenting::{MAX_RIG_DEPTH, RigError};
 pub use aids::{Aids, GUIDE_REACH, Grid, Guide, GuideAxis, MAX_GUIDES};
 pub use nine_slice::symbol_box;
 pub use rich_text::{BaselineShift, CharStyle, MAX_TEXT_RUNS, MAX_URL, ParagraphStyle, StyleSummary, TextFill, TextRun, safe_url};
@@ -1368,6 +1370,12 @@ pub struct Layer {
     /// through [`Layer::shown_opacity`].
     #[serde(default = "full", skip_serializing_if = "is_full")]
     pub opacity: f32,
+    /// The parent layer (ADR 0113, layer parenting): this layer's artwork is placed in the
+    /// space of the first object on that layer at every frame, so it follows it. Not the
+    /// folder or mask the layer sits in (that is [`Layer::parent`]). Kept sound by
+    /// [`Timeline::repair_rig`]; read through [`Timeline::rig_spaces`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rig_parent: Option<LayerId>,
 }
 
 /// How a mask layer's artwork reveals the layers it masks (ADR 0070).
@@ -1462,6 +1470,7 @@ impl PartialEq for Layer {
             && self.muted == o.muted
             && self.mask_mode == o.mask_mode
             && self.opacity.to_bits() == o.opacity.to_bits()
+            && self.rig_parent == o.rig_parent
             && match (&self.armature, &o.armature) {
                 (Some(a), Some(b)) => arc_eq(a, b),
                 (a, b) => a.is_none() && b.is_none(),
@@ -1499,6 +1508,7 @@ impl Layer {
             armature: None,
             mask_mode: MaskMode::Coverage,
             opacity: 1.0,
+            rig_parent: None,
         }
     }
     /// The layer's own opacity, `0..=1` whatever a file says (not a number: opaque).
@@ -1716,6 +1726,8 @@ impl Timeline {
     pub fn repair_masks(&mut self) {
         // The camera layer sits on top, outside any folder (ADR 0027).
         self.repair_camera();
+        // Parent-layer links that can't hold are dropped (ADR 0113).
+        self.repair_rig();
         for i in 0..self.layers.len() {
             let Some(l) = self.layers.get(i) else { continue };
             let Some(p) = l.parent else { continue };
@@ -2375,6 +2387,10 @@ mod gradient_tests;
 #[cfg(test)]
 #[path = "camera_tests.rs"]
 mod camera_tests;
+
+#[cfg(test)]
+#[path = "parenting_tests.rs"]
+mod parenting_tests;
 
 #[cfg(test)]
 mod tests {

@@ -12,7 +12,7 @@ use std::sync::Arc;
 pub fn specs() -> Vec<CommandSpec> {
     let mut v = vec![
         CommandSpec { id: "file.new", label: "New", menu: "File", shortcut: Some("Ctrl+N"), params: "{width?, height?, fps?}", mutates: false, run: new_doc },
-        CommandSpec { id: "file.new_sample", label: "New from Sample", menu: "File", shortcut: None, params: "{which?: demo (default) | interactive (a menu with a Play button, for Test Movie)}", mutates: false, run: new_sample },
+        CommandSpec { id: "file.new_sample", label: "New from Sample", menu: "File", shortcut: None, params: "{which?: demo (default) | interactive (a menu with a Play button, for Test Movie) | arm (three parented layers, ADR 0113)}", mutates: false, run: new_sample },
         CommandSpec { id: "file.open", label: "Open…", menu: "File", shortcut: Some("Ctrl+O"), params: "{path, unsaved? (opens it as unsaved work: a restored copy), untitled? (with no file name, so Save asks for one)}", mutates: false, run: open },
         CommandSpec { id: "file.save", label: "Save", menu: "File", shortcut: Some("Ctrl+S"), params: "{path?, confirm?}", mutates: false, run: save },
         CommandSpec {
@@ -167,7 +167,8 @@ fn new_sample(s: &mut Session, p: &Value) -> Result<Value> {
     let doc = match opt_str(p, "which")? {
         None | Some("demo") => sample::demo(),
         Some("interactive") => sample::interactive(),
-        Some(other) => return Err(EngineError::Param(format!("unknown sample '{other}' (demo or interactive)"))),
+        Some("arm") => sample::arm(),
+        Some(other) => return Err(EngineError::Param(format!("unknown sample '{other}' (demo, interactive or arm)"))),
     };
     s.replace_document(doc, None);
     Ok(json!({"frames": s.frame_count()}))

@@ -990,7 +990,18 @@ Exec=evil", "data_home": "relative/share", "refresh": false}),
     let inner = grouped.visible_elements().into_iter().find(|e| matches!(e.kind, anicraft_doc::ElementKind::Group { .. })).map(|e| e.id.0).unwrap();
     grouped.execute("symbol.edit", &json!({"id": inner})).unwrap();
     assert_eq!(grouped.editing.len(), 2, "the fuzz starts inside a group inside a group");
-    for start in [Session::default(), Session::new(sample::demo()), Session::new(with_sound), on_path, raw, rig, shaped, mixed, warped, layered, in_symbol, keyed, library, button, grouped, eased] {
+    // Layer parenting (ADR 0113): an arm of three parented layers, the playhead mid-tween; links
+    // to missing layers, to themselves and round cycles, wrong-typed parents.
+    let mut arm = Session::new(sample::arm());
+    arm.set_frame(12);
+    let limbs: Vec<u64> = arm.timeline().layers.iter().map(|l| l.id.0).collect();
+    hostile.extend([
+        json!({"parent": limbs.first(), "layer": limbs.last(), "keep": true, "dx": 40, "dy": -40, "rotation": 90}),
+        json!({"parent": limbs.last(), "layers": limbs, "keep": "no", "type": "guide"}),
+        json!({"parent": u64::MAX, "layer": limbs.get(1), "keep": false, "sx": 0, "sy": 0}),
+        json!({"parent": null, "layers": [u64::MAX, 0], "frame": 4_000_000_000u64}),
+    ]);
+    for start in [Session::default(), Session::new(sample::demo()), Session::new(with_sound), arm, on_path, raw, rig, shaped, mixed, warped, layered, in_symbol, keyed, library, button, grouped, eased] {
         let mut s = start;
         for spec in commands().iter().filter(|c| !skip(c.id)) {
             for p in &hostile {

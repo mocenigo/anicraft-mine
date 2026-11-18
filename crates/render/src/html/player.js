@@ -250,7 +250,8 @@ var AniCraft = (function () {
     for (const L of content(M, M.timelines[tli], frame).l) {
       const hit = hittable && L.mk === undefined;
       // Through a camera, a scene's layer is placed by the camera and its depth.
-      const lxf = L.v || xf;
+      // A layer that follows a parent layer is placed by it (`r`, ADR 0113).
+      const lxf = L.r ? mul(L.v || xf, L.r) : L.v || xf;
       // The volume the sounds inside get: the layers holding them, from the main timeline down.
       const gain = out[parent].gain * (L.sg === undefined ? 1 : L.sg);
       for (const e of L.e) {
@@ -340,6 +341,8 @@ var AniCraft = (function () {
       }
       if (v && isMask) v.maskBegin(masks, L.mm || 0);
       let lcx = L.v ? Object.assign({}, cx, { xf: L.v }) : cx;
+      // A layer that follows a parent layer is placed by it (`r`, ADR 0113).
+      if (L.r) lcx = Object.assign({}, lcx, { xf: mul(lcx.xf, L.r) });
       // A layer below full opacity (ADR 0111) fades as one group, as eval.rs draws it.
       let faded = null;
       if (L.o !== undefined && cx.masks === null && !isMask) {

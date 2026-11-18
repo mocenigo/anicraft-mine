@@ -117,6 +117,60 @@ Hiding or locking a folder hides or locks everything inside it. Folders can nest
 moves with its contents. Deleting a folder deletes what's in it: AniCraft asks first, and undo
 brings it all back.
 
+### Layer parenting
+
+Layer parenting makes one layer follow another, the way Animate's does. Parent a forearm layer
+to an upper-arm layer and the forearm moves, turns and scales with the upper arm, while each
+layer keeps its own keyframes and tweens. It is the quick way to rig a cut-out character: a
+hand follows a forearm, the forearm follows the upper arm, a prop follows the hand. You don't
+need symbols inside symbols, or bones.
+
+**Open the parenting view.** Click the small tree button beside the **Layers** heading, or
+choose **View › Parenting View**. Each layer gets a dot in its colour in a new column.
+
+**Parent a layer.** Drag from the layer's dot to the layer it should follow. The row you can
+drop on lights up, and a line then joins the two dots. A layer that follows another steps in,
+so a chain reads like a tree. The layer stays exactly where it is on the stage: only what it
+follows changes. **Esc** cancels the drag.
+
+**Pick the parent from a menu.** Click a layer's dot for a menu of the layers it can follow,
+with **No Parent** at the top. The same menu is under **Parent** when you right-click a layer,
+whether the parenting view is open or not. From the keyboard, Tab to the dot and press
+**Enter** or **Space**.
+
+**Remove the parent.** Choose **No Parent** in that menu, or **Modify › Timeline › Remove
+Parent**. The layer again stays where it is on the stage.
+
+How it behaves:
+
+* The layer follows the **first (bottom-most) object** on its parent layer, at every frame:
+  its position, rotation, scale and skew. Keep one object on a layer that others follow.
+* It does **not** take the parent's colour effect, filters, blend mode, opacity or visibility.
+  Hiding the parent layer doesn't hide the layers that follow it.
+* Each layer still animates on its own. Tween the upper arm's rotation and the forearm swings
+  with it; tween the forearm's rotation too and the elbow bends while it swings. Draw each
+  part from its joint (or give a symbol instance a transformation point there) so it turns
+  about the joint.
+* You keep working on the stage as usual: move, rotate or scale a layer that follows another,
+  type its position in Properties, or draw on it, and it goes where you put it.
+* Parenting is one undo step. If the layer already has keyframes, all of them are adjusted
+  once so that the layer doesn't move at the current frame; on other frames it now goes where
+  its parent takes it.
+* A layer can't follow itself or a layer that follows it. Normal and mask layers can follow;
+  normal, mask and armature layers can be followed. Folders, guide layers and the camera
+  layer can't be either.
+* Deleting a parent layer leaves the layers that followed it where they are.
+* The camera, layer depth, masks and every export work as before: the movie shows what the
+  stage shows.
+
+A ready-made example for scripts, the CLI and the control port:
+`file.new_sample {"which": "arm"}` opens an arm of three parented layers
+(see [Working headless](working-headless.md)).
+
+Not there yet: changing a layer's parent part-way through the timeline, and **Edit Multiple
+Frames** and motion path editing on a layer that follows a turned parent (they work in the
+parent's space). Parenting in Animate files doesn't come across yet.
+
 ### Special layer types
 
 Some layers do a special job: **mask** layers, **guide** layers, the **camera** layer and

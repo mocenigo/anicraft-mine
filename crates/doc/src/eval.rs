@@ -684,6 +684,9 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
     // Deepest first, ties in timeline order (ADR 0082); depth belongs to a scene's own layers.
     // (Only sorted when some layer has a depth: nested timelines allocate nothing.)
     let sorted = (cx.depth == 0 && tl.layers.iter().any(|l| l.has_depth())).then(|| tl.draw_order(frame));
+    // Each layer's space (ADR 0113): a layer with a parent layer is placed by that layer's
+    // lead object at this frame. (Only worked out when some layer has a parent.)
+    let rig = tl.has_rig().then(|| tl.rig_spaces(frame, doc.stage.fps));
     let n = tl.layers.len();
     for k in 0..n {
         let index = sorted.as_ref().map_or(n - 1 - k, |o| o.get(k).copied().unwrap_or(n));
@@ -714,6 +717,10 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
                 None => continue,
             },
             None => cx.xf,
+        };
+        let layer_xf = match rig.as_ref().and_then(|r| r.get(index)) {
+            Some(space) => layer_xf.mul(space),
+            None => layer_xf,
         };
         let lc = LayerCtx { layer, frame, kf_start, clip, masks, guide, outline: layer_outline, xf: layer_xf };
         // A layer below full opacity (its own, or a folder's it is in; ADR 0111) fades as one:

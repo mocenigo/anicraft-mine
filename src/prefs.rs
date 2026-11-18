@@ -132,6 +132,8 @@ pub struct Prefs {
     /// How wide the timeline's layer column is, in points: the line between the layers and
     /// the frames drags (#384). A narrow dock still takes what it needs for the frames.
     pub timeline_layer_w: f32,
+    /// The timeline's parenting view (ADR 0113): the layer list shows each layer's parent.
+    pub timeline_parenting: bool,
     /// Keyboard shortcuts the user changed: action id → its full list of keys (empty =
     /// unbound). Actions not listed keep their defaults (`keymap`).
     pub shortcuts: std::collections::BTreeMap<String, Vec<String>>,
@@ -242,6 +244,7 @@ impl Default for Prefs {
             timeline_start_gap: 0.0,
             timeline_short_rows: false,
             timeline_layer_w: LAYER_W_DEFAULT,
+            timeline_parenting: false,
             shortcuts: Default::default(),
             autosave: true,
             autosave_secs: 60,

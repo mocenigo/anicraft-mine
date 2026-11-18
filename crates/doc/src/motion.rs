@@ -1103,6 +1103,59 @@ impl MotionTween {
         true
     }
 
+    /// Places the whole motion by `m` (ADR 0113): the target, whose own transform the caller
+    /// places the same way, then shows at `m` times where it showed, on every frame that has a
+    /// key. A move alone shifts the path and the X/Y keys ([`MotionTween::translate`]); a turn,
+    /// scale or skew rewrites the transform keys at each keyed frame (between keys the
+    /// properties interpolate as before, each on its own), and the path is carried along.
+    /// `base` is the target as it is before the caller places it.
+    pub fn place(&mut self, base: &Element, m: &Affine) {
+        if !m.is_finite() || (self.path.is_none() && !self.tracks.iter().any(|t| t.property.is_transform())) {
+            return;
+        }
+        let [a, b, c, d, tx, ty] = m.m;
+        if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) {
+            self.translate(Vec2::new(tx, ty));
+            return;
+        }
+        const TRANSFORM: [Property; 6] = [Property::X, Property::Y, Property::ScaleX, Property::ScaleY, Property::Rotation, Property::Skew];
+        let mut frames: Vec<u32> = self.tracks.iter().filter(|t| t.property.is_transform()).flat_map(|t| t.keys.iter().map(|k| k.frame)).collect();
+        frames.push(0);
+        frames.sort_unstable();
+        frames.dedup();
+        let base_props = Props::of(base);
+        let mut placed = base.clone();
+        placed.transform = m.mul(&base.transform);
+        let new_base = Props::of(&placed);
+        // Every keyed frame's values as they will be, read before any key changes.
+        let mut values: Vec<(u32, Props)> = Vec::with_capacity(frames.len());
+        for &f in &frames {
+            let old = self.props_at(&base_props, f as f32);
+            let was = old.transform();
+            placed.transform = m.mul(&was);
+            let mut now = Props::of(&placed);
+            // Rotation keeps its turns: the keyed value moves by how far the placing turns it.
+            let turn = (now.get(Property::Rotation) - Props::of(&Element { transform: was, ..placed.clone() }).get(Property::Rotation)).rem_euclid(360.0);
+            let turn = if turn > 180.0 { turn - 360.0 } else { turn };
+            now.set(Property::Rotation, old.get(Property::Rotation) + turn);
+            values.push((f, now));
+        }
+        for p in TRANSFORM {
+            let varies = values.iter().any(|(_, v)| (v.get(p) - new_base.get(p)).abs() > 1e-3);
+            if self.track(p).is_none() && !varies {
+                continue;
+            }
+            for (f, v) in &values {
+                if v.get(p).is_finite() {
+                    self.set_key(p, *f, v.get(p), new_base.get(p));
+                }
+            }
+        }
+        if let Some(moved) = self.path.as_ref().and_then(|p| motion_path(&p.transformed(m))) {
+            self.path = Some(moved);
+        }
+    }
+
     pub fn track(&self, p: Property) -> Option<&Track> {
         self.tracks.iter().find(|t| t.property == p)
     }

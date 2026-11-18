@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+* **Layer parenting** (fixes #388, ADR 0113, M7): a layer can follow another layer, as in
+  Animate, so a forearm moves with the upper arm while each keeps its own tweens.
+  * **Parenting view** in the timeline: the tree button beside **Layers** (or View › Parenting
+    View) shows a dot for every layer. Drag from a layer's dot to the layer it should follow;
+    a line joins them and chains step in like a tree. Click a dot, or right-click a layer and
+    choose **Parent**, to pick the parent from a menu or choose **No Parent**. Modify ›
+    Timeline › Remove Parent. The dots work from the keyboard and with screen readers.
+  * **The layer stays where it is** when you parent, re-parent or unparent it, in one undo
+    step. Deleting a parent layer leaves its followers in place.
+  * It follows the first object on the parent layer at every frame: position, rotation, scale
+    and skew, through tweens, motion guides and bones. Not colour effects, filters, opacity or
+    visibility. Chains can be as long as you need; a layer can't follow its own follower.
+  * You edit a parented layer on the stage as always: moving, transforming, typing a position
+    and drawing all go where you put them.
+  * The stage, Test Movie and every export show the same thing; the camera, layer depth, masks
+    and folders work as before. Files without parenting are unchanged.
+  * Headless, CLI and MCP: `layer.set_parent`, `layer.remove_parent`, `layer.parents`, and
+    `file.new_sample {"which": "arm"}` for an arm of three parented layers.
+  * Not yet: changing the parent part-way through the timeline; Edit Multiple Frames and
+    motion path editing in stage space on a follower; importing parenting from Animate files
+    (the format isn't publicly described).
 * **Several documents open at once, each in a tab** (ADR 0112, #420, M8).
   * **Document tabs** below the menu bar: the file's name, a dot while it has unsaved
     changes, and a × to close it. Click a tab to show its document, middle-click to close it,

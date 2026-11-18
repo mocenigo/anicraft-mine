@@ -746,7 +746,8 @@ impl<'a> Bake<'a> {
     /// One timeline: its length `n`, frames as runs `f: [[content, count]…]`, mask layer count
     /// `nm`, labels `lb`, and per frame the scripts `a` and sounds `snd` of keyframes starting
     /// there (top layer first). A scene's frames seen through its camera (ADR 0027) carry the
-    /// camera's tint (`cc`) and each layer its view (`v`: the camera and the layer's depth).
+    /// camera's tint (`cc`) and each layer its view (`v`: the camera and the layer's depth). A
+    /// layer that follows a parent layer (ADR 0113) carries its space that frame (`r`).
     /// `decls`: the declarations its frame scripts share (ADR 0052), for timelines that
     /// run scripts; their functions go out as `fn` and their variables' types as `vt`.
     fn timeline(&mut self, tl: &Timeline, scene: bool, decls: Option<&Decls>) -> Value {
@@ -760,6 +761,8 @@ impl<'a> Bake<'a> {
         let mut sounds = Map::new();
         for f in 0..n {
             let camera = if scene { tl.camera_at(f, &stage) } else { None };
+            // Each layer's space this frame (ADR 0113): layers that follow a parent layer.
+            let rig = tl.has_rig().then(|| tl.rig_spaces(f, stage.fps));
             let mut layers = Vec::new();
             // Drawn deepest first, ties in timeline order, as the evaluator does (ADR 0082).
             let order = if scene { tl.draw_order(f) } else { (0..tl.layers.len()).rev().collect() };
@@ -773,6 +776,10 @@ impl<'a> Bake<'a> {
                     if let Some(v) = matrix(&view) {
                         entry.insert("v".into(), v);
                     }
+                }
+                // Where its parent layer's object puts it this frame (`r`, ADR 0113).
+                if let Some(r) = rig.as_ref().and_then(|r| r.get(index)).and_then(matrix) {
+                    entry.insert("r".into(), r);
                 }
                 // The layer's volume, for the sounds inside the symbols on it.
                 if layer.sound_gain() != 1.0 {

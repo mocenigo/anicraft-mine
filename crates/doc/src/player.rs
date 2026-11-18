@@ -564,6 +564,8 @@ fn walk(doc: &Document, st: &PlayerState, tl: &Timeline, frame: u32, parent: usi
     // Drawn deepest first (ADR 0082), so the topmost hit is the one drawn last.
     // (Only sorted when some layer has a depth: nested timelines allocate nothing.)
     let sorted = (depth == 1 && tl.layers.iter().any(|l| l.has_depth())).then(|| tl.draw_order(frame));
+    // Layers that follow a parent layer are placed by it (ADR 0113), as the evaluator does.
+    let rig = tl.has_rig().then(|| tl.rig_spaces(frame, doc.stage.fps));
     let n = tl.layers.len();
     for k in 0..n {
         let index = sorted.as_ref().map_or(n - 1 - k, |o| o.get(k).copied().unwrap_or(n));
@@ -581,6 +583,10 @@ fn walk(doc: &Document, st: &PlayerState, tl: &Timeline, frame: u32, parent: usi
                 None => continue,
             },
             None => xf,
+        };
+        let layer_xf = match rig.as_ref().and_then(|r| r.get(index)) {
+            Some(space) => layer_xf.mul(space),
+            None => layer_xf,
         };
         // Instances inside a group belong to the group's timeline (ADR 0073).
         let els = crate::expand_groups(&els).into_owned();

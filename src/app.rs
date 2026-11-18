@@ -505,6 +505,10 @@ pub struct App {
     pub tl_drag: timeline::TlDrag,
     /// The layer being dragged by its name to another place in the stack (#407).
     pub tl_layer_drag: Option<anicraft_engine::doc::LayerId>,
+    /// The layer whose dot is being dragged to its new parent layer in the parenting view
+    /// (ADR 0113), and where the dots were drawn this frame.
+    pub tl_parent_drag: Option<anicraft_engine::doc::LayerId>,
+    pub tl_parent_dots: Vec<crate::parenting::Dot>,
     /// The layer column's width while its edge is dragged (#384); the preference takes it on
     /// release.
     pub tl_layer_w_drag: Option<f32>,
@@ -820,6 +824,8 @@ impl App {
             frame_sel: None,
             tl_drag: timeline::TlDrag::None,
             tl_layer_drag: None,
+            tl_parent_drag: None,
+            tl_parent_dots: Vec::new(),
             tl_layer_w_drag: None,
             dock: prefs.workspaces.layout(),
             dock_view: Default::default(),
@@ -2064,6 +2070,16 @@ impl App {
                 self.run("raw.subselect", json!({"x": 400, "y": 400, "slop": 4}));
                 self.raw_ends = Vec::new();
                 self.raw_anchors = vec![anicraft_engine::geom::Vec2::new(620.0, 270.0)];
+            }
+            Some("parenting") | Some("parentmenu") => {
+                // Layer parenting (ADR 0113): an arm of three parented layers, mid-tween, the
+                // timeline's parenting view open and the forearm selected.
+                self.run("file.new_sample", json!({"which": "arm"}));
+                self.prefs.timeline_parenting = true;
+                self.run("timeline.goto", json!({"frame": 12}));
+                let fore = self.s.timeline().layers.get(1).map(|l| l.id.0);
+                self.run("layer.select", json!({"layer": fore, "select": true}));
+                self.view.fit = true;
             }
             Some("rawsnap") => {
                 // Snapping while drawing (ADR 0045): a line being drawn from a corner of a raw

@@ -471,6 +471,7 @@ mod tests {
             a.open_panel(Some("testmovie"));
         }));
         // The layer depth row shows on artwork layers once the scene has a camera.
+        found.extend(check("parenting view", |a, _| a.open_panel(Some("parenting"))));
         found.extend(check("layer depth", |a, _| {
             a.open_panel(Some("camera"));
             a.run("layer.select", serde_json::json!({"index": 1}));

@@ -1,6 +1,6 @@
 # Command reference
 
-Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 373 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
+Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 376 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
 
 This page is generated from the command registry, so it always matches the version of AniCraft it came with.
 
@@ -9,7 +9,7 @@ This page is generated from the command registry, so it always matches the versi
 - **New** `file.new` · **Ctrl+N** (macOS **⌘N**)
   Parameters: `{width?, height?, fps?}`
 - **New from Sample** `file.new_sample`
-  Parameters: `{which?: demo (default) | interactive (a menu with a Play button, for Test Movie)}`
+  Parameters: `{which?: demo (default) | interactive (a menu with a Play button, for Test Movie) | arm (three parented layers, ADR 0113)}`
 - **New from Template…** `file.new_from_template`
   Parameters: `{template? (a built-in template's id, from file.templates) | path? (a template file: any .anicraft opens as a new, untitled document)}`
 - **Open…** `file.open` · **Ctrl+O** (macOS **⌘O**)
@@ -164,6 +164,8 @@ This page is generated from the command registry, so it always matches the versi
   Parameters: `{layer?, name?, type?: normal|mask|masked|guide|guided, mask?: coverage|alpha|luminance (a mask layer's mask type), color?, outline?: bool (view as outlines), height?: 100|200|300, opacity?: 0..100 (percent), visible?, locked?, onion?} sets several at once, as one undo step; answers with the layer's properties`
 - **Remove Camera** `camera.remove` · Modify › Timeline · changes the document
   Parameters: `{} (removes the camera layer and its moves; asks first when the camera is animated)`
+- **Remove Parent** `layer.remove_parent` · Modify › Timeline · changes the document
+  Parameters: `{layer? (default: the active layer), layers?: [ids], keep?: bool (default true)} the layer stops following its parent layer and stays where it is on stage at the playhead (layer.set_parent with parent: null)`
 - **Add Warp Mesh** `warp.add` · Modify › Asset Warp · changes the document
   Parameters: `{element? (a shape or bitmap; default the one selected), resolution? (cells along the longer side, 2…48; default 12)} → {element, created, resolution, columns, rows}. Covers the artwork with a warp mesh on every keyframe of its layer that holds it (it becomes a drawing object); on artwork that has one, changes the mesh's resolution`
 - **Remove Warp** `warp.remove` · Modify › Asset Warp · changes the document
@@ -375,6 +377,10 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{attached?: bool (default: toggles), layer?} an attached layer stays where it is on screen while the camera moves (titles, HUDs); its depth plays no part (ADR 0082)`
 - **Layer Depths** `layer.depths`
   Parameters: `{frame?} → {camera: bool, layers: [{layer, name, depth, keyed, key_here, attached}]} the layers that can have a depth, nearest first (ties in timeline order), at the frame`
+- **Parent Layer** `layer.set_parent` · changes the document
+  Parameters: ``{parent: layer id | null (null removes the parent), layer? (default: the active layer), layers?: [ids] (several at once), keep?: bool (default true)} layer parenting (ADR 0113): the layer's artwork follows the first object on the parent layer at every frame (position, rotation, scale, skew; not colour or filters), while keeping its own keys and tweens. With `keep` the layer stays where it is on stage at the playhead: every key is re-expressed for the new parent, in one undo step. A layer can't follow itself or a layer that follows it; folders, guides, the camera and armature layers can't follow, and folders, guides and the camera can't lead``
+- **Layer Parents** `layer.parents`
+  Parameters: `{frame?} → {layers: [{layer, name, parent, parent_name, ancestors: [ids, nearest first], children: [ids], can_follow, can_lead, space: [a, b, c, d, tx, ty] (the layer's own coordinates → the stage's at the frame)}]} top to bottom`
 - **Add Bone** `bone.add` · changes the document
   Parameters: ``{from? (instance or shape id: the bone starts on it) | parent? (bone id: the bone starts on its end; for a bone inside a shape, on its joint), to (instance or shape id: the bone moves it as a whole), head?: [x, y] (the joint on a root, stage px, default its registration point; from something that hangs from a bone the joint is always that bone's end, so chains stay joined), tail?: [x, y] (default `to`'s registration point), name?} → {bone, layer}. Both go to an armature layer (made for the first bone). Instances and shapes mix in one armature: a bone inside a shape can carry an instance (parent), and a bone can end on a shape that then gets bones of its own (bone.add_in_shape with parent)``
 - **Add Bone in Shape** `bone.add_in_shape` · changes the document

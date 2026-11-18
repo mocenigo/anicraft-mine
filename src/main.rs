@@ -63,6 +63,7 @@ mod mixed;
 mod motion_editor;
 mod movie_explorer;
 mod panels;
+mod parenting;
 mod motion_path;
 mod onion;
 mod pathtools;
@@ -478,6 +479,8 @@ mod rulers_tests;
 mod retime_ui_tests;
 #[cfg(test)]
 mod layer_ui_tests;
+#[cfg(test)]
+mod parenting_ui_tests;
 #[cfg(test)]
 mod tilt_ui_tests;
 #[cfg(test)]

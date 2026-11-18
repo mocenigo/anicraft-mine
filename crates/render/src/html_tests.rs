@@ -1574,3 +1574,13 @@ fn layer_opacity_comes_across_as_one_fade_group_a_layer() {
     assert!(dl.groups.iter().any(|g| (g.alpha - 0.2).abs() < 1e-6) && dl.groups.iter().any(|g| g.parent.is_some()), "{:?}", dl.groups);
     compare(&doc, &vec![(vec![], vec![]); 12]);
 }
+
+#[test]
+fn layers_that_follow_a_parent_layer_come_across() {
+    // The arm sample (ADR 0113): three parented layers, each tweening; the page places every
+    // layer as the Rust player does, on every frame.
+    let arm = sample::arm();
+    compare(&arm, &vec![(vec![], vec![]); 30]);
+    let page = to_html(&arm, &HtmlOptions::default()).unwrap().html;
+    assert!(page.contains("\"r\":["), "followers carry their space");
+}
