@@ -89,6 +89,24 @@ impl Cache {
         })
     }
 
+    /// Another document is shown from now on (ADR 0112): the tiles of the one put aside go, and
+    /// the render service's pictures with them, so only the document on screen holds graphics
+    /// memory.
+    pub fn forget_document(&mut self) {
+        self.tiles.clear();
+        self.shown_state = None;
+        self.ready = (0, 0);
+        if let Some(s) = &self.service {
+            s.forget_pictures();
+        }
+    }
+
+    /// How many tile textures are held (tests).
+    #[cfg(test)]
+    pub fn tile_count(&self) -> usize {
+        self.tiles.len()
+    }
+
     fn has(&mut self, key: u64) -> bool {
         self.tick += 1;
         let tick = self.tick;

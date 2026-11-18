@@ -250,8 +250,8 @@ honest, detailed status is in the project's roadmap on GitHub.
 
 ### Can I open several documents at once?
 
-Not yet. AniCraft works on one document at a time for now. Opening another asks you to save
-the current one first if it has unsaved changes.
+Yes. Each open document has a tab below the menu bar, and you can copy artwork from one and
+paste it into another. See [Document tabs](workspace.md#document-tabs).
 
 ### Is the interface available in my language?
 

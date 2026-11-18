@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+* **Several documents open at once, each in a tab** (ADR 0112, #420, M8).
+  * **Document tabs** below the menu bar: the file's name, a dot while it has unsaved
+    changes, and a × to close it. Click a tab to show its document, middle-click to close it,
+    drag it to reorder, right-click for Close, Close Others, Close All and showing the file
+    in your file manager. **Ctrl+Tab** / **Ctrl+Shift+Tab** and **Ctrl+PageDown** /
+    **Ctrl+PageUp** switch; **File › Close** (**Ctrl+W**) and **Close All** (**Ctrl+Alt+W**)
+    as in Animate; the Window menu lists the open documents.
+  * **Each document is its own**: undo history, selection, playhead, zoom and pan, timeline
+    scroll, Library and Motion Editor state are kept per tab; tools, colours and the panel
+    layout stay as they are.
+  * **New, Open, recent files, dropped files and restored copies open in a new tab**, so
+    opening a document no longer asks about (or replaces) the one you were in. A file that is
+    already open is shown instead. The untouched sample makes way for the first document.
+  * **Unsaved changes**: closing a tab asks about that document; quitting asks once and
+    lists every unsaved document, with Save All.
+  * **Autosave and crash recovery** keep one copy per open document and restore each into
+    its own tab.
+  * **Copy and paste between documents** brings the symbols, images and sounds the artwork
+    uses into the other Library, renamed when a name is taken ("Ball 2"); pasting again reuses
+    them. Before, a pasted instance could show a different symbol that happened to have the
+    same id, and images didn't come at all.
+  * Screen readers get a tab list of the open documents. A document that isn't shown keeps no
+    render caches.
+
 * **Lines are drawn once, with no darker edges where their pieces overlapped** (ADR 0110, M3).
   A line used to be filled as many small overlapping pieces, and pixels on its edge where two
   pieces met came out up to half a pixel too dark: along wide curves, at round corners and

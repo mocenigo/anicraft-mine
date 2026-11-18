@@ -2,10 +2,9 @@
 
 use crate::params::*;
 use crate::{CommandSpec, EngineError, Result, Session, TransformOrigin};
-use anicraft_doc::{Element, ElementId, ElementKind, Layer, LayerId, LayerKind, Symbol, SymbolId};
+use anicraft_doc::{Element, ElementId, ElementKind, Layer, LayerId, LayerKind};
 use anicraft_geom::{Affine, Rect, Vec2};
 use serde_json::{Value, json};
-use std::collections::HashSet;
 use std::sync::Arc;
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -62,12 +61,13 @@ pub fn specs() -> Vec<CommandSpec> {
 // ----- clipboard --------------------------------------------------------------------------------
 
 /// Copied artwork: elements as they look at the playhead, kept apart by the layer they came from,
-/// plus every symbol they need, so a paste into another document is complete.
+/// plus every Library item they need, so a paste into another document is complete (ADR 0112).
 #[derive(Clone, Default)]
 pub struct Clipboard {
     /// One entry per layer the selection was on, top to bottom.
     pub layers: Vec<ClipLayer>,
-    pub symbols: Vec<Arc<Symbol>>,
+    /// The symbols, bitmaps and sounds the artwork uses, and the document it was copied in.
+    pub carried: crate::transfer::Carried,
 }
 
 /// One layer's copied artwork.
@@ -95,35 +95,6 @@ impl Clipboard {
     }
 }
 
-/// The symbols `e` places: itself, or what is inside it as a group (ADR 0073).
-fn symbol_refs(e: &Element) -> Vec<SymbolId> {
-    match &e.kind {
-        ElementKind::Symbol { symbol, .. } => vec![*symbol],
-        ElementKind::Group { .. } => anicraft_doc::expand_groups(std::slice::from_ref(&Arc::new(e.clone()))).iter().filter_map(|m| if let ElementKind::Symbol { symbol, .. } = m.kind { Some(symbol) } else { None }).collect(),
-        ElementKind::Shape(_) | ElementKind::Text(_) | ElementKind::Camera => Vec::new(),
-    }
-}
-
-/// Symbols reachable from `roots` (bounded walk; libraries may be cyclic).
-pub(crate) fn collect_symbols(s: &Session, roots: &[Element]) -> Vec<Arc<Symbol>> {
-    let mut seen: HashSet<SymbolId> = HashSet::new();
-    let mut stack: Vec<SymbolId> = roots.iter().flat_map(symbol_refs).collect();
-    let mut out = Vec::new();
-    while let Some(id) = stack.pop() {
-        if !seen.insert(id) || seen.len() > 10_000 {
-            continue;
-        }
-        let Some(sym) = s.doc.library.iter().find(|x| x.id == id) else { continue };
-        for l in &sym.timeline.layers {
-            for k in &l.keyframes {
-                stack.extend(k.elements.iter().flat_map(|e| symbol_refs(e)));
-            }
-        }
-        out.push(sym.clone());
-    }
-    out
-}
-
 fn copy(s: &mut Session, _: &Value) -> Result<Value> {
     let layers = s.selected_layers();
     if layers.is_empty() {
@@ -139,10 +110,10 @@ fn copy(s: &mut Session, _: &Value) -> Result<Value> {
         }
     }
     let all: Vec<Element> = copied.iter().flat_map(|c| c.elements.iter().cloned()).collect();
-    let symbols = collect_symbols(s, &all);
+    let carried = crate::transfer::carry(s, &all, []);
     let n = all.len();
     let layers = copied.len();
-    s.clipboard = Clipboard { layers: copied, symbols };
+    s.clipboard = Clipboard { layers: copied, carried };
     Ok(json!({"copied": n, "layers": layers}))
 }
 
@@ -159,7 +130,7 @@ fn clipboard_bounds(s: &Session) -> Rect {
 fn clip_element_bounds(s: &Session, e: &Element) -> Rect {
     // Symbols may come from another document: look them up in the clipboard first.
     let mut doc = s.doc.clone();
-    for sym in &s.clipboard.symbols {
+    for sym in &s.clipboard.carried.symbols {
         if doc.symbol(sym.id).is_none() {
             doc.library.push(sym.clone());
         }
@@ -223,7 +194,9 @@ fn layer_targets(s: &mut Session, src: &[(LayerId, String)]) -> Result<Vec<Layer
 /// Whether pasting the clipboard would put a symbol inside itself: inside an open symbol, an
 /// instance of it (or of one using it).
 pub(crate) fn clipboard_nests(s: &Session) -> bool {
-    s.clipboard.layers.iter().flat_map(|c| &c.elements).any(|e| matches!(e.kind, anicraft_doc::ElementKind::Symbol { symbol, .. } if crate::editing::would_nest(s, symbol)))
+    // (Symbols from another document come in as new ones: they can't hold the open one.)
+    s.clipboard.carried.origin == s.origin
+        && s.clipboard.layers.iter().flat_map(|c| &c.elements).any(|e| matches!(e.kind, anicraft_doc::ElementKind::Symbol { symbol, .. } if crate::editing::would_nest(s, symbol)))
 }
 
 fn paste_with(s: &mut Session, offset: Vec2, float: bool) -> Result<Value> {
@@ -233,7 +206,7 @@ fn paste_with(s: &mut Session, offset: Vec2, float: bool) -> Result<Value> {
     if clipboard_nests(s) {
         return Err(EngineError::State("a symbol can't be pasted inside itself".into()));
     }
-    import_symbols(s, &s.clipboard.symbols.clone());
+    let map = crate::transfer::bring(s, &s.clipboard.carried.clone());
     let targets = paste_targets(s)?;
     let copied = s.clipboard.layers.clone();
     let mut sel = crate::Selection::default();
@@ -241,7 +214,7 @@ fn paste_with(s: &mut Session, offset: Vec2, float: bool) -> Result<Value> {
     let mut merged = false;
     let mut floating = Vec::new();
     for (c, &layer) in copied.iter().zip(&targets) {
-        let (fresh, m) = s.with_layer(layer, |s| paste_layer(s, &c.elements, offset, float))?;
+        let (fresh, m) = s.with_layer(layer, |s| paste_layer(s, &c.elements, offset, float, &map))?;
         merged |= m;
         if float {
             // The raw shapes among them: every pasted element that can merge.
@@ -277,13 +250,15 @@ fn paste_with(s: &mut Session, offset: Vec2, float: bool) -> Result<Value> {
 /// Pastes `elements` moved by `offset` into the active layer's keyframe at the playhead; their
 /// new ids, and whether raw shapes merged. With `float` raw shapes go on top whole, like
 /// objects, so the new ids are in the order of `elements`.
-pub(crate) fn paste_layer(s: &mut Session, elements: &[Element], offset: Vec2, float: bool) -> Result<(Vec<ElementId>, bool)> {
+/// `map`: what the Library items they use are called in this document (ADR 0112).
+pub(crate) fn paste_layer(s: &mut Session, elements: &[Element], offset: Vec2, float: bool, map: &crate::transfer::IdMap) -> Result<(Vec<ElementId>, bool)> {
     let mut fresh = Vec::new();
     let mut out = Vec::new();
     let mut raw = Vec::new();
     for e in elements.iter().cloned() {
         let mut e = e;
         e.id = ElementId(s.doc.alloc_id());
+        map.element(&mut e);
         e.transform = Affine::translate(offset.x, offset.y).mul(&e.transform);
         // Raw shapes go into the drawing where they land, cutting and joining what they touch
         // (ADR 0042); objects go on top.
@@ -304,27 +279,6 @@ pub(crate) fn paste_layer(s: &mut Session, elements: &[Element], offset: Vec2, f
         fresh.extend(crate::merge::merge_in(s, raw)?);
     }
     Ok((fresh, merged))
-}
-
-/// Adds the symbols this document lacks (from a clipboard, maybe another document's) and
-/// moves the id counter past every id they use, so new ids stay unique.
-pub(crate) fn import_symbols(s: &mut Session, symbols: &[Arc<Symbol>]) {
-    let mut max_id = 0u64;
-    for sym in symbols.iter().cloned() {
-        if s.doc.symbol(sym.id).is_none() {
-            max_id = max_id.max(sym.id.0);
-            for l in &sym.timeline.layers {
-                max_id = max_id.max(l.id.0);
-                for k in &l.keyframes {
-                    for e in &k.elements {
-                        max_id = max_id.max(e.id.0);
-                    }
-                }
-            }
-            s.doc.library.push(sym);
-        }
-    }
-    s.doc.next_id = s.doc.next_id.max(max_id.saturating_add(1));
 }
 
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {

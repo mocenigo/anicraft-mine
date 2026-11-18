@@ -93,7 +93,6 @@ fn confirm_modal(app: &mut App, ctx: &egui::Context) {
         }
         Some(false) => {
             app.confirm = None;
-            app.close_after_save = false;
             app.status_ok(tr!("Cancelled"));
         }
         None => {}
@@ -101,20 +100,31 @@ fn confirm_modal(app: &mut App, ctx: &egui::Context) {
 }
 
 fn close_modal(app: &mut App, ctx: &egui::Context) {
-    if !app.close_dialog || app.prompt.is_some() || app.confirm.is_some() {
+    if !app.tabs.asking() || app.prompt.is_some() || app.confirm.is_some() {
         return;
     }
-    #[derive(PartialEq)]
-    enum Choice {
-        Save,
-        Discard,
-        Cancel,
-    }
+    use crate::tabs::Answer as Choice;
+    // The document a closing tab asks about, or every unsaved one when the window closes: one
+    // question for all of them (ADR 0112).
+    let names = crate::tabs::asked_about(app);
+    let Some(name) = names.first().cloned() else { return };
+    let several = names.len() > 1;
     let mut choice = None;
-    let name = app.s.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| tr!("Untitled").to_string(), |n| n.to_string_lossy().into_owned());
     egui::Modal::new(egui::Id::new("close_guard")).show(ctx, |ui| {
         ui.set_width(440.0);
-        ui.label(text(Type::Title, tr!("Save changes to “{name}” before closing?", name = name)));
+        if several {
+            ui.label(text(Type::Title, trn!("Save changes to {n} document before closing?", "Save changes to {n} documents before closing?", names.len())));
+            ui.add_space(6.0);
+            // Their own names, as on their tabs (the first few of a long list).
+            for n in names.iter().take(8) {
+                ui.label(text(Type::Body, format!("• {n}")));
+            }
+            if names.len() > 8 {
+                ui.label(text(Type::Body, trn!("and {n} more", "and {n} more", names.len() - 8)).color(T.text_dim));
+            }
+        } else {
+            ui.label(text(Type::Title, tr!("Save changes to “{name}” before closing?", name = name)));
+        }
         ui.add_space(6.0);
         ui.label(text(Type::Body, tr!("If you don't save, your changes since the last save will be lost.")).color(T.text_dim));
         ui.add_space(12.0);
@@ -123,7 +133,7 @@ fn close_modal(app: &mut App, ctx: &egui::Context) {
                 choice = Some(Choice::Discard);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.add(egui::Button::new(text(Type::Body, tr!("Save")).strong().color(T.on_fill)).fill(T.accent).min_size(egui::vec2(96.0, crate::theme::TARGET + 4.0))).clicked() {
+                if ui.add(egui::Button::new(text(Type::Body, if several { tr!("Save All") } else { tr!("Save") }).strong().color(T.on_fill)).fill(T.accent).min_size(egui::vec2(96.0, crate::theme::TARGET + 4.0))).clicked() {
                     choice = Some(Choice::Save);
                 }
                 if ui.add(egui::Button::new(tr!("Cancel")).min_size(egui::vec2(96.0, crate::theme::TARGET + 4.0))).clicked() {
@@ -139,23 +149,10 @@ fn close_modal(app: &mut App, ctx: &egui::Context) {
     } else if enter {
         choice = Some(Choice::Save);
     }
-    match choice {
-        Some(Choice::Save) => {
-            app.close_dialog = false;
-            app.close_after_save = true;
-            if app.s.path.is_some() {
-                app.perform("file.save", json!({}));
-            } else {
-                app.invoke("file.save_as");
-            }
-        }
-        Some(Choice::Discard) => {
-            app.allow_close = true;
-        }
-        Some(Choice::Cancel) => {
-            app.close_dialog = false;
-        }
-        None => {}
+    // Save saves each (a document without a file asks for a name); Don't Save gives the changes
+    // up; Cancel leaves everything open (`tabs::tick` does the rest).
+    if let Some(choice) = choice {
+        crate::tabs::answer(app, choice);
     }
 }
 

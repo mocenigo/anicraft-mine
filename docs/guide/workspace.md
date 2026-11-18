@@ -17,6 +17,7 @@ every panel (see [Arranging panels and workspaces](#arranging-panels-and-workspa
 | Area | Where | What it's for |
 |---|---|---|
 | Menu bar | top | Every command, grouped as in Animate: File, Edit, View, Insert, Modify, Commands, Control, Window, Help. On macOS there's also the AniCraft menu, with About, Settings… and Quit. |
+| Document tabs | below the menu bar | One tab for each open document. See [Document tabs](#document-tabs). |
 | Edit bar | above the stage | The scene menu, the path to the symbol you're editing, the active layer, the stage size, an **Onion skin** switch, the **Clip content outside the stage** button and the zoom menu. |
 | Tools | left | The drawing and editing tools, the **Snap to Objects** magnet, and the current fill and stroke colours. Drag the dotted grip at the top to move them. |
 | Stage | middle | Your artwork. The stage rectangle is what the movie shows. You can draw on the grey area around it too. |
@@ -133,7 +134,51 @@ last run's lines after Test Movie closes.
 ### The Window menu
 
 The **Window** menu has the workspaces, every panel (**Actions** is **F9**, **Movie Explorer**
-**Alt+F3**), the **Brush Library** and **Onion Skin**.
+**Alt+F3**), the **Brush Library** and **Onion Skin**. At the bottom are **Next Document**,
+**Previous Document** and the open documents, with a tick by the one you're looking at.
+
+## Document tabs
+
+You can have several documents open at once. Each one has a tab below the menu bar, as in
+Animate.
+
+![Three documents open in tabs, the third with unsaved changes](images/document-tabs.png)
+
+* **Click** a tab to show its document. Every panel then shows that document.
+* A **dot** before the name means the document has changes you haven't saved.
+* Click the **×** on a tab to close it, or **middle-click** the tab.
+* **Drag** a tab left or right to put the tabs in another order.
+* **Right-click** a tab for **Close**, **Close Others**, **Close All**, and a command that
+  shows the file in your system's file manager.
+* Hold the pointer over a tab to see where its file is.
+
+| To | Press |
+|---|---|
+| Show the next document | **Ctrl+Tab** or **Ctrl+PageDown** |
+| Show the previous document | **Ctrl+Shift+Tab** or **Ctrl+PageUp** |
+| Close the document | **Ctrl+W** (**File › Close**) |
+| Close every document | **Ctrl+Alt+W** (**File › Close All**) |
+
+On a Mac, the tab keys use the Control key, because ⌘+Tab switches apps.
+
+Each document keeps its own undo history, selection, playhead, zoom and scroll position, so
+you find it as you left it. Your tools, colours and panel layout stay the same from one
+document to the next.
+
+**File › New**, **File › Open**, a recent file and a file dropped on the window each open in
+a new tab. If the file is already open, AniCraft shows its tab instead. The sample animation
+that AniCraft starts with makes way for the first document you open, as long as you haven't
+changed it.
+
+To move artwork between documents, copy it in one (**Ctrl+C**), show the other and paste
+(**Ctrl+V**). Symbols, images and sounds the artwork uses come along into the other
+document's Library. See [Symbols and the Library](symbols-and-library.md#copying-between-documents).
+
+When you close a tab that has unsaved changes, AniCraft asks whether to save them. When you
+quit, it asks once and lists every document with unsaved changes. Closing the last document
+leaves an empty one and shows the start screen.
+
+You can have up to 32 documents open.
 
 ## The command palette
 

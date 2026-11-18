@@ -90,6 +90,7 @@ mod shape_hints;
 mod stage;
 mod stage_a11y;
 mod swatches_panel;
+mod tabs;
 mod start;
 mod startup;
 mod templates;
@@ -179,6 +180,10 @@ fn run(attempt: startup::Attempt, file: Option<&Path>, shot: Option<PathBuf>, op
             startup::log_adapter(cc.wgpu_render_state.as_ref());
             let starting_fresh = file_given.is_none() && shot.is_none();
             let mut a = app::App::new(cc, session, shot);
+            // A file named on the command line keeps its tab, even an imported one (ADR 0112).
+            if file_given.is_some() {
+                a.tabs.keep_first();
+            }
             if let Some(s) = a.shot.as_mut() {
                 s.width = look.shot_width;
             }

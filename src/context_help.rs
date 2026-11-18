@@ -344,7 +344,7 @@ pub fn subject(app: &App, ctx: &egui::Context, pointer: bool) -> Subject {
     if app.templates.save.is_some() {
         return Subject::Dialog(Dialog::SaveTemplate);
     }
-    if app.close_dialog {
+    if app.tabs.asking() {
         return Subject::Dialog(Dialog::CloseUnsaved);
     }
     if let Some(p) = &app.palette {
@@ -506,7 +506,8 @@ mod tests {
         app.show_prefs = false;
         settle(&ctx, &mut app);
         // A dialog that asks first: help for the command it asks about.
-        app.close_dialog = true;
+        app.run("layer.new", serde_json::json!({}));
+        crate::tabs::quit(&mut app);
         assert_eq!(subject(&app, &ctx, true), Subject::Dialog(Dialog::CloseUnsaved));
         frame(&ctx, &mut app, f1());
         assert_eq!(app.help_opened.as_deref(), Some("getting-started.md#save-your-work"), "F1 works while a dialog holds the editor");

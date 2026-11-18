@@ -98,6 +98,10 @@ This page is generated from the editor's shortcut map, so it always matches the 
 | Find Next | F3 | F3 |
 | Find Previous | Shift+F3 | ⇧F3 |
 | Movie Explorer | Alt+F3 | ⌥F3 |
+| Close Document | Ctrl+W | ⌘W |
+| Close All Documents | Ctrl+Alt+W | ⌥⌘W |
+| Next Document | Ctrl+PageDown | ⌘PageDown |
+| Previous Document | Ctrl+PageUp | ⌘PageUp |
 | Brush Size Down | \[ | \[ |
 | Brush Size Up | \] | \] |
 | Zoom in / out | Ctrl+=, Ctrl+- | ⌘=, ⌘- |

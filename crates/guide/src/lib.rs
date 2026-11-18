@@ -70,6 +70,7 @@ pub const PAGES: &[Page] = &[
 pub const IMAGES: &[(&str, &[u8])] = &[
     image!("images/workspace.png"),
     image!("images/start-screen.png"),
+    image!("images/document-tabs.png"),
     image!("images/library.png"),
     image!("images/onion-skin.png"),
     image!("images/motion-editor.png"),

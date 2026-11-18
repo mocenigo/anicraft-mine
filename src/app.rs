@@ -565,15 +565,15 @@ pub struct App {
     /// The Custom Ease window (ADR 0081), when open.
     pub ease: Option<crate::ease_editor::EaseEditor>,
     pub show_shortcuts: bool,
-    /// The window close was intercepted because of unsaved changes.
-    pub close_dialog: bool,
+    /// The open documents (ADR 0112): the one being edited is `s`, the others wait in their
+    /// tabs. Closing one, or the window, with unsaved changes asks first (`tabs::CloseFlow`).
+    pub tabs: crate::tabs::Tabs,
+    /// The window may close: every document's unsaved changes were saved or given up.
     pub allow_close: bool,
-    /// Close the window once the pending Save As succeeds.
-    pub close_after_save: bool,
     /// The file dialog a command asked for (command, parameter, title, file name), shown at the
     /// end of the frame, and the open dialog's answer to come.
     #[cfg(not(target_arch = "wasm32"))]
-    file_request: Option<(&'static str, &'static str, String, String)>,
+    pub(crate) file_request: Option<(&'static str, &'static str, String, String)>,
     #[cfg(not(target_arch = "wasm32"))]
     file_dialog: Option<(&'static str, &'static str, platform::FileAnswer)>,
     pub prefs: prefs::Prefs,
@@ -595,7 +595,7 @@ pub struct App {
     system_clipboard: bool,
     swallowed_paste: platform::SwallowedPaste,
     /// Document revision at the end of the last frame (edits schedule a repaint).
-    last_revision: u64,
+    pub(crate) last_revision: u64,
     title: String,
     /// Keyboard shortcuts in effect (defaults plus the user's changes) and their lookup table.
     pub keymap: keymap::Keymap,
@@ -609,7 +609,7 @@ pub struct App {
     /// Playback follows the sound's clock (the movie has sounds and the device plays them).
     audio_clock: bool,
     /// The scene and frame last heard, so a moved playhead plays a snippet (scrubbing).
-    heard: Option<(usize, u32)>,
+    pub(crate) heard: Option<(usize, u32)>,
     /// The panel Ctrl+F6 last moved focus to (where the next press continues from).
     pub last_panel: Option<crate::a11y::Region>,
     /// The stage's elements as keyboard stops and screen-reader nodes (ADR 0064).
@@ -669,6 +669,12 @@ pub const VIEW_SHORTCUTS: &[(&str, &str)] = &[
     ("F3", "view.find_next"),
     ("Shift+F3", "view.find_prev"),
     ("Alt+F3", "view.movie_explorer"),
+    // The open documents (ADR 0112): Close and Close All as in Animate, and the tab keys of
+    // browsers (Ctrl+Tab and Ctrl+Shift+Tab work too).
+    ("Ctrl+W", "view.close_document"),
+    ("Ctrl+Alt+W", "view.close_all_documents"),
+    ("Ctrl+PageDown", "view.next_document"),
+    ("Ctrl+PageUp", "view.prev_document"),
     // Brush size, as in paint programs.
     ("[", "view.brush_smaller"),
     ("]", "view.brush_larger"),
@@ -716,6 +722,8 @@ impl App {
             let _ = anicraft_engine::text::Fonts::get();
         });
         let mut session = session;
+        // The sample or a blank page gives way to the first document opened (ADR 0112).
+        let placeholder = session.path.is_none() && !session.is_dirty();
         // Open Recent is the session's list, kept in the preferences (ADR 0059).
         session.recent = prefs.recent.clone();
         session.brushes = prefs.brushes.clone();
@@ -843,9 +851,8 @@ impl App {
             envelope: None,
             ease: None,
             show_shortcuts: false,
-            close_dialog: false,
+            tabs: crate::tabs::Tabs::new(placeholder),
             allow_close: false,
-            close_after_save: false,
             #[cfg(not(target_arch = "wasm32"))]
             file_request: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1312,6 +1319,7 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             Some("updates") => self.updates.request(),
             Some("files") => self.show_files = true,
+            Some("tabs") => crate::tabs::sample(self),
             Some("start") => {
                 // The start screen with sample recent files (one pinned, one missing).
                 crate::start::open(self);
@@ -2998,7 +3006,7 @@ impl App {
 
     /// Any modal (prompt, confirmation, close guard) is open: global shortcuts pause.
     pub fn modal_open(&self) -> bool {
-        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.confirm.is_some() || self.close_dialog || self.plugin_dialog.is_some() || self.templates.save.is_some()
+        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some()
     }
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
@@ -3011,6 +3019,12 @@ impl App {
         {
             o.insert("folder".into(), json!(f.display().to_string()));
         }
+        // New and Open bring their document in a tab of its own (ADR 0112): the one being
+        // edited stays open, so there is nothing to ask about.
+        if crate::tabs::opens_document(id) {
+            self.perform(id, params);
+            return;
+        }
         if let Some(c) = self.s.confirmation(id, &params)
             && (c.irreversible || !self.skip_confirm.contains(id))
         {
@@ -3021,8 +3035,17 @@ impl App {
         self.perform(id, params);
     }
 
-    /// Runs a command and reports the outcome; routine destructive edits say how to undo.
+    /// Runs a command and reports the outcome; routine destructive edits say how to undo. A
+    /// command that brings a document (New, Open, a restored copy) runs in a new tab (ADR 0112).
     pub fn perform(&mut self, id: &str, params: Value) -> Option<Value> {
+        if crate::tabs::opens_document(id) {
+            return crate::tabs::open(self, id, params);
+        }
+        self.perform_here(id, params)
+    }
+
+    /// [`App::perform`] on the document being edited, whatever the command.
+    pub(crate) fn perform_here(&mut self, id: &str, params: Value) -> Option<Value> {
         if id == "file.publish" {
             // File › Publish runs in the background, with its own progress view (ADR 0060).
             crate::publish_panel::start(self, &params);
@@ -3095,9 +3118,6 @@ impl App {
                 // In a browser the file goes to the downloads (ADR 0036).
                 let path = v["saved"].as_str().unwrap_or("");
                 self.status_ok(if platform::WEB { tr!("Saved {path} to your downloads", path = path) } else { tr!("Saved {path}", path = path) });
-                if self.close_after_save {
-                    self.allow_close = true;
-                }
             }
             "file.import" | "file.import_to_library" if v.get("sound").is_some() => {
                 let id = anicraft_engine::doc::SoundId(v["sound"].as_u64().unwrap_or(0));
@@ -3251,7 +3271,7 @@ impl App {
             return;
         }
         if id == "file.recovery_list" {
-            if !self.recovery.rescan() {
+            if !self.recovery.rescan(&crate::tabs::recovery_sessions(self)) {
                 return; // a browser answers on a later frame (autosave::tick)
             }
             self.recovery.show = !self.recovery.found.is_empty();
@@ -3693,6 +3713,12 @@ impl App {
         if sheet {
             self.show_shortcuts = !self.show_shortcuts;
         }
+        // The next and the previous document (ADR 0112): Ctrl+Tab and Ctrl+Shift+Tab, with the
+        // Control key on every system (⌘+Tab is the Mac's own), from anywhere.
+        let doc_step = ctx.input_mut(|i| if i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab) { Some(false) } else if i.consume_key(Modifiers::CTRL, Key::Tab) { Some(true) } else { None });
+        if let Some(forward) = doc_step {
+            crate::tabs::step(self, forward);
+        }
         // Moving between panels (Ctrl+F6) works from anywhere, a text field included.
         let panel_step = ctx.input_mut(|i| {
             self.shortcuts.iter().filter(|(_, _, id)| matches!(*id, "view.next_panel" | "view.prev_panel")).find_map(|(m, k, id)| i.consume_key(*m, *k).then_some(*id == "view.next_panel"))
@@ -3711,8 +3737,11 @@ impl App {
         // The Test Movie window's movie has the keyboard (ADR 0052): its keys are the
         // movie's; only shortcuts with Ctrl (⌘) or Alt reach the app (Restart is Ctrl+Enter).
         if self.test_movie.is_some() && crate::test_movie::has_keys(ctx) {
-            let fire: Vec<&'static str> = ctx.input_mut(|i| self.shortcuts.iter().filter(|(m, _, _)| m.command || m.ctrl || m.alt).filter_map(|(m, k, id)| i.consume_key(*m, *k).then_some(*id)).collect());
-            for id in fire.into_iter().filter(|id| !id.starts_with("view.") && !id.starts_with("tool.")) {
+            // (The view's own keys stay with the window: Ctrl+W there closes the movie, not the
+            // document.)
+            let fire: Vec<&'static str> =
+                ctx.input_mut(|i| self.shortcuts.iter().filter(|(m, _, id)| (m.command || m.ctrl || m.alt) && !id.starts_with("view.") && !id.starts_with("tool.")).filter_map(|(m, k, id)| i.consume_key(*m, *k).then_some(*id)).collect());
+            for id in fire {
                 self.invoke(id);
             }
             return;
@@ -3798,6 +3827,10 @@ impl App {
                 "view.find_next" => crate::find_panel::step(self, true),
                 "view.find_prev" => crate::find_panel::step(self, false),
                 "view.movie_explorer" => crate::movie_explorer::open(self),
+                "view.close_document" => crate::tabs::close_active(self),
+                "view.close_all_documents" => crate::tabs::close_all(self),
+                "view.next_document" => crate::tabs::step(self, true),
+                "view.prev_document" => crate::tabs::step(self, false),
                 "view.brush_smaller" => crate::brushtool::resize(self, false),
                 "view.brush_larger" => crate::brushtool::resize(self, true),
                 id if id.starts_with("tool.") => tool = keymap::tool_for(id).or(tool),
@@ -3877,7 +3910,7 @@ impl App {
     }
 
     fn update_title(&mut self, ctx: &egui::Context) {
-        let name = self.s.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| tr!("Untitled").to_string(), |n| n.to_string_lossy().into_owned());
+        let name = crate::tabs::active_name(self);
         let title = format!("AniCraft — {name}{}", if self.s.is_dirty() { " •" } else { "" }); // i18n-exempt: the product name and the file's
         if title != self.title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -3922,7 +3955,6 @@ impl App {
             }
         } else if cancel {
             self.prompt = None;
-            self.close_after_save = false;
         }
     }
 
@@ -4132,8 +4164,10 @@ impl eframe::App for App {
         crate::test_movie::remember_place(self);
         // And the floating panels' windows (ADR 0075).
         crate::dock_ui::remember(self);
-        let clean = !self.s.is_dirty() || self.allow_close || self.shot.is_some();
-        self.recovery.finish(&self.s, clean);
+        // Every open document (ADR 0112): unsaved work nobody decided about is kept for the
+        // next start.
+        let clean = self.allow_close || self.shot.is_some();
+        crate::tabs::finish_all(self, clean);
         #[cfg(not(target_arch = "wasm32"))]
         self.updates.finish();
         #[cfg(not(target_arch = "wasm32"))]
@@ -4154,7 +4188,6 @@ impl eframe::App for App {
                 Some(answer) => self.file_dialog = Some((id, key, answer)),
                 // No blocking fallback: on macOS that is what crashed.
                 None => {
-                    self.close_after_save = false;
                     self.status_err(crate::i18n::t(tr_noop!("The file dialog could not be shown")));
                 }
             }
@@ -4178,12 +4211,17 @@ impl App {
                     self.file_dialog = None;
                     self.request(id, json!({ key: path.display().to_string() }));
                 }
-                Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.file_dialog = None;
-                    self.close_after_save = false;
-                }
+                Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => self.file_dialog = None,
             }
         }
+    }
+
+    /// A file dialog was asked for or is up: a close waits for its Save As (`tabs::tick`).
+    pub(crate) fn file_dialog_open(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.file_request.is_some() || self.file_dialog.is_some();
+        #[cfg(target_arch = "wasm32")]
+        false
     }
 
     /// One frame of the whole interface. Needs no window, so tests run it headless.
@@ -4277,6 +4315,8 @@ impl App {
     /// and the stage.
     fn workspace(&mut self, ui: &mut egui::Ui) {
         let bar = |fill| egui::Frame::NONE.fill(fill).inner_margin(egui::Margin::symmetric(8, 2));
+        // The open documents' tabs, above the edit bar of the one shown (ADR 0112).
+        egui::Panel::top("document_tabs").exact_size(crate::tabs::BAR_HEIGHT).frame(egui::Frame::NONE.fill(T.chrome)).show(ui, |ui| crate::tabs::bar(self, ui));
         egui::Panel::top("edit_bar").exact_size(theme::TARGET + 8.0).frame(bar(T.panel)).show(ui, |ui| panels::edit_bar(self, ui));
         egui::Panel::bottom("status_bar").exact_size(28.0).frame(bar(T.chrome)).show(ui, |ui| panels::status_bar(self, ui));
         crate::dock_ui::workspace(self, ui);
@@ -4308,18 +4348,14 @@ impl App {
         crate::envelope::show(self, &ctx);
         crate::ease_editor::show(self, &ctx);
 
-        // Never lose work on close: intercept it while there are unsaved changes.
-        if self.allow_close {
-            if self.close_after_save || self.close_dialog {
-                self.close_after_save = false;
-                self.close_dialog = false;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        } else if ctx.input(|i| i.viewport().close_requested()) && self.shot.is_none() && self.s.is_dirty() {
+        // Never lose work on close: intercept it while any open document has unsaved changes,
+        // and ask once for all of them (ADR 0004, ADR 0112).
+        if !self.allow_close && ctx.input(|i| i.viewport().close_requested()) && self.shot.is_none() && crate::tabs::any_dirty(self) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.playing = false;
-            self.close_dialog = true;
+            crate::tabs::quit(self);
         }
+        // Closing tabs, or the window: the next step once a question is answered or a save done.
+        crate::tabs::tick(self, &ctx);
         self.files_window(&ctx);
 
         // Close a coalesced edit (property drags) once nothing is being dragged or typed.
@@ -4343,7 +4379,7 @@ impl App {
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         crate::brushtool::sync(self, pointer_down);
         // A browser asks before leaving a page with unsaved work (its close guard).
-        platform::set_unsaved(self.s.is_dirty());
+        platform::set_unsaved(crate::tabs::any_dirty(self));
         // Copied artwork or frames: the system clipboard says so, as any copy replaces what it
         // held, and so the next Ctrl/⌘+V comes through (issue #197). A browser sends that key
         // press whatever its clipboard holds.

@@ -406,6 +406,10 @@ pub fn places() -> Vec<(&'static str, Option<PathBuf>)> {
 /// Where crash-recovery copies live (ADR 0015): `Recovery` in the settings folder.
 /// `ANICRAFT_RECOVERY_DIR` points it elsewhere (tests, portable installs).
 pub fn recovery_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(d) = TEST_RECOVERY_DIR.with(|d| d.borrow().clone()) {
+        return Some(d);
+    }
     match std::env::var_os("ANICRAFT_RECOVERY_DIR").filter(|v| !v.is_empty()) {
         Some(d) => Some(PathBuf::from(d)),
         None => config_dir().map(|d| d.join("Recovery")), // i18n-exempt: a folder name
@@ -440,9 +444,62 @@ pub fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::R
     f.sync_all()
 }
 
+/// What showing a file where it is kept is called on this system (a document tab's menu, ADR
+/// 0112).
+pub fn reveal_label() -> &'static str {
+    match OS {
+        Os::Mac => tr!("Reveal in Finder"),
+        Os::Windows => tr!("Show in File Explorer"),
+        _ => tr!("Show in Folder"),
+    }
+}
+
+/// Opens the system's file manager on `path`'s folder, with the file picked where the system
+/// can do that (Explorer and the Finder; elsewhere the folder opens).
+pub fn reveal_in_folder(path: &Path) -> Result<(), String> {
+    // Tests click every control: they never start another program. A browser has no folders.
+    if cfg!(test) || WEB {
+        return Ok(());
+    }
+    let mut cmd = match OS {
+        Os::Windows => {
+            let mut c = std::process::Command::new("explorer");
+            c.arg(format!("/select,{}", path.display()));
+            c
+        }
+        Os::Mac => {
+            let mut c = std::process::Command::new("open");
+            c.arg("-R").arg(path);
+            c
+        }
+        _ => {
+            let mut c = std::process::Command::new("xdg-open");
+            c.arg(path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")));
+            c
+        }
+    };
+    cmd.spawn().map(|_| ()).map_err(|e| tr!("could not show {path}: {e}", path = path.display(), e = e))
+}
+
 /// Whether the recovery folder was chosen explicitly (screenshot runs only touch it then).
 pub fn recovery_dir_overridden() -> bool {
+    #[cfg(test)]
+    if TEST_RECOVERY_DIR.with(|d| d.borrow().is_some()) {
+        return true;
+    }
     std::env::var_os("ANICRAFT_RECOVERY_DIR").is_some_and(|v| !v.is_empty())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's own recovery folder (each test runs on its own thread, so no other sees it).
+    static TEST_RECOVERY_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Points this test's apps at a recovery folder of its own (`None`: back to none).
+#[cfg(test)]
+pub fn set_recovery_dir_for_tests(dir: Option<PathBuf>) {
+    TEST_RECOVERY_DIR.with(|d| *d.borrow_mut() = dir);
 }
 
 /// Where Help › User Guide writes the bundled book (ADR 0069): the system's cache folder

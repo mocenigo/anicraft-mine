@@ -553,6 +553,13 @@ fn registry_items(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &[CommandSp
             if ui_item(ui, tr!("Start Screen"), "", None) {
                 crate::start::open(app);
             }
+            // The open documents (ADR 0112): close the one shown, or all of them.
+            if ui_item(ui, tr!("Close"), app.keymap.primary("view.close_document").unwrap_or(""), None) {
+                crate::tabs::close_active(app);
+            }
+            if ui_item(ui, tr!("Close All"), app.keymap.primary("view.close_all_documents").unwrap_or(""), None) {
+                crate::tabs::close_all(app);
+            }
         }
     }
     let mut subs: Vec<&str> = Vec::new();
@@ -736,6 +743,20 @@ pub(crate) fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &
                 crate::onion::toggle_ghosts(app);
             }
             ui.label(text(Type::Caption, tr!("Drag a panel's tab to dock it on any side, stack it with others or float it")));
+            // The open documents, as in Animate's Window menu: the shown one is ticked.
+            ui.separator();
+            if ui_item(ui, tr!("Next Document"), "Ctrl+Tab", None) {
+                crate::tabs::step(app, true);
+            }
+            if ui_item(ui, tr!("Previous Document"), "Ctrl+Shift+Tab", None) {
+                crate::tabs::step(app, false);
+            }
+            for t in crate::tabs::infos(app) {
+                // A document's own name: not translated.
+                if ui_item(ui, &t.name, "", Some(t.active)) {
+                    crate::tabs::activate_id(app, t.id);
+                }
+            }
         }
         "Help" => {
             if ui_item(ui, tr!("User Guide"), "", None) {

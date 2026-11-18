@@ -213,6 +213,10 @@ engine itself never depends on the GPU.
 
 ## 5. Engine (`anicraft-engine`)
 
+* One `Session` is one open document. The desktop app keeps several (ADR 0112): the one being
+  edited is `App::s`, the others are parked whole in their tabs (`src/tabs.rs`) and exchanged
+  when a tab is shown; `Session::take_shared` hands the clipboards, tool style and plug-ins
+  from one to the next. The CLI and MCP have one session.
 * `Session` owns the `Document` (a **persistent, structurally shared tree**: layers,
   keyframes, elements, paths and symbols live behind `Arc`, mutated only via `Arc::make_mut`),
   the content `state` id, the save point, the playhead, the active layer, the selection, a

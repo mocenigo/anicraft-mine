@@ -858,7 +858,7 @@ fn screen_reader_names_are_translated_too() {
     }
     found.extend(untranslated_names("close guard", |a, _| {
         a.run("layer.new", serde_json::json!({}));
-        a.close_dialog = true;
+        crate::tabs::quit(a);
     }));
     found.extend(untranslated_names("library item", |a, _| {
         a.library_sel = a.s.doc.library.first().map(|s| crate::app::LibraryItem::Symbol(s.id));

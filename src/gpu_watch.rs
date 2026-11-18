@@ -225,7 +225,7 @@ fn notice_due(at: f64) -> bool {
 pub fn tick(app: &mut crate::app::App, ctx: &egui::Context) {
     let news = take_news();
     if news.error.is_some() || news.failing {
-        app.recovery.write_now(&app.s);
+        app.recovery.doc.write_now(&app.s);
     }
     if news.failing {
         ctx.request_repaint_after(Duration::from_millis(500));
@@ -236,7 +236,7 @@ pub fn tick(app: &mut crate::app::App, ctx: &egui::Context) {
     let Some(why) = news.gone else { return };
     crate::startup::line(&format!("closing the window to open it again another way ({why})"));
     // The work goes to the recovery folder for the next window (the lock goes, so it finds it).
-    app.recovery.finish(&app.s, false);
+    crate::tabs::finish_all(app, false);
     crate::startup::lost_mid_session();
     // A saved document opens again as it was; unsaved work is offered back.
     let file = app.s.path.clone().filter(|_| !app.s.is_dirty());

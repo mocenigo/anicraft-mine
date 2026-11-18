@@ -109,10 +109,11 @@ fn drawing_and_free_transform_snap_to_guides() {
     let screen_of = |x: f32, y: f32| pos2(g.origin.x + x * g.zoom, g.origin.y + y * g.zoom);
     // Grabbed near the middle, so the box's centre is what snaps; let go 3 screen pixels short.
     // (Not on the very centre: the transformation point is there, and a drag on it moves the
-    // point, not the box; ADR 0111.)
+    // point, not the box; ADR 0111. Nor far from it: the box is under 40 screen pixels tall
+    // with the document tabs above the stage, and its lower edge's handle is 20 below.)
     let sel = app.s.selection_bounds();
     let cx = (sel.min.x + sel.max.x) * 0.5;
-    let inside = screen_of(cx, (sel.min.y + sel.max.y) * 0.5) + vec2(0.0, 12.0);
+    let inside = screen_of(cx, (sel.min.y + sel.max.y) * 0.5) + vec2(0.0, 9.0);
     let dx = (500.0 - cx) * g.zoom - 3.0;
     drag(&ctx, &mut app, inside, inside + vec2(dx, 0.0));
     let after = app.s.selection_bounds();

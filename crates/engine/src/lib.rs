@@ -66,6 +66,7 @@ pub mod recovery;
 pub mod render_service;
 pub mod selection;
 pub mod snap;
+pub mod transfer;
 pub mod params;
 pub mod plugin_export;
 pub mod player;
@@ -454,6 +455,12 @@ pub struct Session {
     gesture_rec: usize,
     /// What the running command records instead of itself (`macro.run` records its steps).
     pub(crate) record_as: Option<Vec<Recorded>>,
+    /// Which open document this is (ADR 0112): a number no other document in this process has,
+    /// new with every New and Open. A copy remembers it, so a paste knows whether the artwork
+    /// came from this document or another.
+    pub origin: u64,
+    /// Symbols pastes brought in from other documents, so the same one isn't brought twice.
+    pub(crate) brought: Vec<transfer::Brought>,
 }
 
 /// Each piece of a marquee's cut, with the shape it was cut from.
@@ -568,6 +575,8 @@ impl Session {
             rec: history::Recording::default(),
             gesture_rec: 0,
             record_as: None,
+            origin: transfer::fresh_origin(),
+            brought: Vec::new(),
         }
     }
 
@@ -676,6 +685,36 @@ impl Session {
         self.revision = rev + 1;
         self.path = path;
         self.history.budget_bytes = budget;
+    }
+
+    /// Drops what the session keeps only to draw faster (its display list and the picture of an
+    /// open symbol in place): a document put aside while another is shown keeps none (ADR 0112).
+    pub fn drop_caches(&self) {
+        self.dl_cache.replace(None);
+        self.picture_cache.replace(None);
+    }
+
+    /// Takes over from `from` what belongs to the editor rather than to one document (ADR
+    /// 0112): the clipboards, the tool style, the plug-ins, recent files, brushes and filter
+    /// presets, and how the rulers, grid and guides show. An editor with several documents open
+    /// calls it when it turns to another one, so a copy made in one pastes into the next and the
+    /// tools stay as they were. The documents, their undo histories, selections and playheads
+    /// stay where they are; `from` is left with this session's (usually empty) share.
+    pub fn take_shared(&mut self, from: &mut Session) {
+        use std::mem::swap;
+        swap(&mut self.style, &mut from.style);
+        swap(&mut self.aids, &mut from.aids);
+        swap(&mut self.text_style, &mut from.text_style);
+        swap(&mut self.clipboard, &mut from.clipboard);
+        swap(&mut self.frame_clipboard, &mut from.frame_clipboard);
+        swap(&mut self.ease_clipboard, &mut from.ease_clipboard);
+        swap(&mut self.filter_clipboard, &mut from.filter_clipboard);
+        swap(&mut self.plugins, &mut from.plugins);
+        swap(&mut self.recent, &mut from.recent);
+        swap(&mut self.brushes, &mut from.brushes);
+        swap(&mut self.filter_presets, &mut from.filter_presets);
+        self.hit_area = from.hit_area;
+        self.history.budget_bytes = from.history.budget_bytes;
     }
 
     /// Runs a command by id. Mutating commands are atomic: on error the document is restored.

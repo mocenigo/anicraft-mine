@@ -164,8 +164,9 @@ uses them opens without that motion, and the import report says so. See [Tweens]
 
 Graphic, movie clip and button symbols behave as you expect: graphics keep step with their parent
 timeline, movie clips play their own, and buttons have Up, Over, Down and Hit frames. Double-click
-an instance (or press **Ctrl+E**) to edit it in place. Not yet: shared libraries and importing
-Library items from another document. See [Symbols and the Library](symbols-and-library.md).
+an instance (or press **Ctrl+E**) to edit it in place. Paste an instance into another open
+document and its symbols come along, renamed if a name is taken. Not yet: shared libraries and
+dragging items from another document's Library. See [Symbols and the Library](symbols-and-library.md).
 
 ### ActionScript
 
