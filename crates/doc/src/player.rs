@@ -504,6 +504,7 @@ pub fn hit_frame(len: u32) -> u32 {
 pub fn hit_area(doc: &Document, tl: &Timeline, xf: Affine) -> DisplayList {
     let mut dl = evaluate_symbol(doc, tl, hit_frame(tl.frame_count()), xf, None);
     dl.items.retain(|i| !i.guide && i.masks.is_none());
+    dl.links.clear();
     for i in &mut dl.items {
         i.clip = None;
     }

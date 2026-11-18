@@ -369,10 +369,14 @@ enum Edge {
 /// A selected element: its layer and id.
 type Item = (LayerId, ElementId);
 
-fn moves_for(bounds: &[(Item, Rect)], target: Rect, edge: Edge) -> Vec<(Item, Vec2)> {
-    bounds
+/// What align and distribute place: the elements of one unit (see [`selected_units`]) and their
+/// combined bounds.
+type Unit = (Vec<Item>, Rect);
+
+fn moves_for(units: &[Unit], target: Rect, edge: Edge) -> Vec<(Item, Vec2)> {
+    units
         .iter()
-        .map(|(id, b)| {
+        .flat_map(|(items, b)| {
             let d = match edge {
                 Edge::Left => Vec2::new(target.min.x - b.min.x, 0.0),
                 Edge::HCenter => Vec2::new(target.center().x - b.center().x, 0.0),
@@ -381,7 +385,7 @@ fn moves_for(bounds: &[(Item, Rect)], target: Rect, edge: Edge) -> Vec<(Item, Ve
                 Edge::VCenter => Vec2::new(0.0, target.center().y - b.center().y),
                 Edge::Bottom => Vec2::new(0.0, target.max.y - b.max.y),
             };
-            (*id, d)
+            items.iter().map(move |id| (*id, d))
         })
         .collect()
 }
@@ -415,44 +419,74 @@ fn translate_each(s: &mut Session, moves: &[(Item, Vec2)]) -> Result<usize> {
     Ok(n)
 }
 
-/// Each selected element's bounds, over every layer: alignment works across layers.
-fn selected_bounds(s: &Session) -> Vec<(Item, Rect)> {
-    s.selected_elements().iter().map(|(l, e)| ((*l, e.id), s.element_bounds_on(*l, e.id))).filter(|(_, b)| !b.is_empty()).collect()
+/// What align and distribute place, over every layer (alignment works across layers): each
+/// selected object on its own, and each raw drawing as one (#301). A raw drawing is the selected
+/// raw pieces on a layer that touch, such as a fill and the strokes on its edges (ADR 0042), so a
+/// shape keeps its outline where it goes.
+fn selected_units(s: &Session) -> Vec<Unit> {
+    let mut units: Vec<Unit> = Vec::new();
+    let mut raw: Vec<(LayerId, Vec<Item>, Vec<Rect>)> = Vec::new();
+    for (l, e) in s.selected_elements() {
+        let b = s.element_bounds_on(l, e.id);
+        if b.is_empty() {
+            continue;
+        }
+        if crate::merge::mergeable(&e).is_none() {
+            units.push((vec![(l, e.id)], b));
+            continue;
+        }
+        match raw.iter_mut().find(|(k, ..)| *k == l) {
+            Some((_, ids, boxes)) => {
+                ids.push((l, e.id));
+                boxes.push(b);
+            }
+            None => raw.push((l, vec![(l, e.id)], vec![b])),
+        }
+    }
+    for (_, ids, boxes) in raw {
+        for group in crate::merge::touching_groups(&boxes) {
+            let items: Vec<Item> = group.iter().filter_map(|&i| ids.get(i).copied()).collect();
+            let b = group.iter().filter_map(|&i| boxes.get(i)).fold(Rect::EMPTY, |r, b| r.union(b));
+            units.push((items, b));
+        }
+    }
+    units
 }
 
 fn align(s: &mut Session, p: &Value, edge: Edge) -> Result<Value> {
-    let bounds = selected_bounds(s);
-    if bounds.is_empty() {
+    let units = selected_units(s);
+    if units.is_empty() {
         return Err(EngineError::State("nothing is selected".into()));
     }
-    // One element aligns to the stage (there is nothing else to align it with).
-    let to_stage = opt_bool(p, "to_stage")?.unwrap_or(bounds.len() == 1);
+    // One element (or one raw drawing) aligns to the stage: there is nothing else to align it with.
+    let to_stage = opt_bool(p, "to_stage")?.unwrap_or(units.len() == 1);
     let target = if to_stage {
         Rect::new(0.0, 0.0, s.doc.stage.width as f32, s.doc.stage.height as f32)
     } else {
-        bounds.iter().fold(Rect::EMPTY, |r, (_, b)| r.union(b))
+        units.iter().fold(Rect::EMPTY, |r, (_, b)| r.union(b))
     };
-    let moves = moves_for(&bounds, target, edge);
+    let moves = moves_for(&units, target, edge);
     let n = translate_each(s, &moves)?;
     Ok(json!({"moved": n, "to_stage": to_stage}))
 }
 
 fn distribute(s: &mut Session, horizontal: bool) -> Result<Value> {
-    let mut bounds = selected_bounds(s);
-    if bounds.len() < 3 {
+    let mut units = selected_units(s);
+    if units.len() < 3 {
         return Err(EngineError::State("select at least three elements to distribute".into()));
     }
     let key = |b: &Rect| if horizontal { b.center().x } else { b.center().y };
-    bounds.sort_by(|a, b| key(&a.1).total_cmp(&key(&b.1)));
-    let (Some(first), Some(last)) = (bounds.first(), bounds.last()) else { return Ok(json!({"moved": 0})) };
+    units.sort_by(|a, b| key(&a.1).total_cmp(&key(&b.1)));
+    let (Some(first), Some(last)) = (units.first(), units.last()) else { return Ok(json!({"moved": 0})) };
     let (a, z) = (key(&first.1), key(&last.1));
-    let step = (z - a) / (bounds.len() - 1) as f32;
-    let moves: Vec<(Item, Vec2)> = bounds
+    let step = (z - a) / (units.len() - 1) as f32;
+    let moves: Vec<(Item, Vec2)> = units
         .iter()
         .enumerate()
-        .map(|(i, (id, b))| {
+        .flat_map(|(i, (items, b))| {
             let d = a + step * i as f32 - key(b);
-            (*id, if horizontal { Vec2::new(d, 0.0) } else { Vec2::new(0.0, d) })
+            let d = if horizontal { Vec2::new(d, 0.0) } else { Vec2::new(0.0, d) };
+            items.iter().map(move |id| (*id, d))
         })
         .collect();
     let n = translate_each(s, &moves)?;

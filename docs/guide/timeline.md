@@ -6,7 +6,7 @@ onion skin and Edit Multiple Frames.
 
 A note on keys: AniCraft uses **Ctrl** on Windows and Linux and **⌘** (Command) on macOS, and
 **Alt** is **⌥** (Option) on macOS. So **Ctrl+Alt+C** is **⌥⌘C** on a Mac. Every shortcut
-here is a default you can change in the shortcut editor (**F1**); see
+here is a default you can change in the shortcut editor (**Ctrl+Alt+Shift+K**); see
 [Preferences, shortcuts and accessibility](preferences-shortcuts-accessibility.md).
 
 ## A tour of the timeline
@@ -269,7 +269,7 @@ tween's object on several frames, and dragging the shared pivot.
 
 A movie can have several scenes, each with its own timeline, played one after another.
 
-* Add one with **Insert › Scene**.
+* Add one with **Insert › New Scene**.
 * Switch scenes from the scene menu at the top left of the stage, or with **Shift+Page Up** and
   **Shift+Page Down**.
 * Duplicate, rename, reorder and delete them under **Modify › Scene**. Deleting a scene with

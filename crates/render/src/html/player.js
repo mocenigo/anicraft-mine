@@ -363,11 +363,30 @@ var AniCraft = (function () {
       }
     }
     const xf = mul(cx.xf, m);
-    if (e.tf) return evalField(e.tf, e.n || "", xf, concat(cx.c, fx), cx.group, clip, masks, dl, child, v);
-    if (e.y === undefined) {
-      const it = { p: e.p, m: xf, f: e.f === undefined ? -1 : e.f, s: e.s || null, k: e.k || null, eo: !!e.eo, c: concat(cx.c, fx), clip: clip, masks: masks, group: cx.group };
-      dl.items.push(it);
-      if (v) v.item(it);
+    if (e.tf || e.y === undefined) {
+      // Text with filters draws in a group of its own, as a movie clip does (eval.rs, ADR
+      // 0099): the group fades at the text's alpha and its items keep the rest of the effect.
+      // (Mask artwork takes neither.)
+      const filters = masks === null && Array.isArray(e.fx) && e.fx.length ? e.fx : null;
+      let color = concat(cx.c, fx), group = cx.group;
+      if (filters) {
+        group = dl.groups.length;
+        dl.groups.push({ parent: cx.group, alpha: fx[7] === 0 ? Math.min(Math.max(fx[3], 0), 1) : 1, blend: "normal", clip: clip, filters: filters, margin: e.fm || 0 });
+        color = concat(cx.c, fx[7] === 0 ? [fx[0], fx[1], fx[2], 1, fx[4], fx[5], fx[6], 0] : fx);
+        if (v) v.groupBegin(group, dl.groups[group]);
+      }
+      if (e.tf) evalField(e.tf, e.n || "", xf, color, group, clip, masks, dl, child, v);
+      else {
+        // Text in several colours with filters comes as one item of pieces (`pp`), so the
+        // pieces share one filter group (ADR 0085, ADR 0099).
+        const pieces = Array.isArray(e.pp) ? e.pp : [[e.p, e.f === undefined ? -1 : e.f]];
+        for (const pc of pieces) {
+          const it = { p: pc[0], m: xf, f: pc[1], s: e.s || null, k: e.k || null, eo: !!e.eo, c: color, clip: clip, masks: masks, group: group };
+          dl.items.push(it);
+          if (v) v.item(it);
+        }
+      }
+      if (filters && v) v.groupEnd(group, dl.groups[group]);
       return;
     }
     const sym = M.symbols[e.y];
@@ -419,7 +438,11 @@ var AniCraft = (function () {
     dl.clips.push(clip);
     items.push(mk(tf.r, tf.kp, null, null, clip, inner));
     // Changed text has no outline here (it isn't laid out): the page draws it.
-    if (text === null) items.push(mk(tf.p, tf.f, null, null, inner, null));
+    // Authored text in several colours comes in pieces (ADR 0085).
+    if (text === null) {
+      if (tf.pp) for (const [pp, pf] of tf.pp) items.push(mk(pp, pf, null, null, inner, null));
+      else items.push(mk(tf.p, tf.f, null, null, inner, null));
+    }
     if (focused && fs && tf.k === "input" && fs.caret === fs.anchor) items.push(mk(tf.cr, tf.f, null, null, inner, null));
     if (tf.bd) items.push(mk(tf.r, -1, tf.bd, tf.bk || null, clip, null));
     for (const it of items) dl.items.push(it);
@@ -551,6 +574,7 @@ var AniCraft = (function () {
   // Math.round as the Rust evaluator computes it.
   function round(x) {
     if (!Number.isFinite(x)) return x;
+    if (x >= -0.5 && x < 0) return -0;
     const f = Math.floor(x);
     return x - f >= 0.5 ? f + 1 : f;
   }
@@ -558,7 +582,9 @@ var AniCraft = (function () {
     let out = max ? -Infinity : Infinity;
     for (const v of vals) {
       if (Number.isNaN(v)) return Number.NaN;
-      if ((max && v > out) || (!max && v < out)) out = v;
+      // Equal zeros prefer +0 for max and -0 for min, regardless of argument order.
+      if ((max && v > out) || (!max && v < out) ||
+          (v === 0 && out === 0 && Object.is(v, max ? 0 : -0))) out = v;
     }
     return out;
   }

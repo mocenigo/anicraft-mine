@@ -240,7 +240,7 @@ pub fn save_window(app: &mut App, ctx: &egui::Context) {
         d.picture = Some(picture_png(doc).and_then(|png| texture(ctx, "save-preview", &png)));
     }
     let (mut submit, mut cancel) = (false, false);
-    egui::Window::new(tr!("Save as Template")).id(egui::Id::new("save_template")).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, [0.0, -60.0]).show(ctx, |ui| {
+    crate::windows::new(ctx, tr!("Save as Template")).id(egui::Id::new("save_template")).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, [0.0, -60.0]).show(ctx, |ui| {
         ui.set_min_width(420.0);
         if let Some(Some(tex)) = &d.picture {
             let s = tex.size_vec2();

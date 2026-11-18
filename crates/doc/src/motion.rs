@@ -21,7 +21,7 @@
 //! time the whole path when only the ends are pinned. Anchors that aren't pinned shape the path
 //! only.
 
-use crate::{ColorEffect, ColorStyle, ColorTransform, Element, ElementId, ElementKind, Easing, FilterParam, FilterProp, MAX_FILTER_SLOTS, Rgba};
+use crate::{ColorEffect, ColorStyle, ColorTransform, Element, ElementId, Easing, FilterParam, FilterProp, MAX_FILTER_SLOTS, Rgba};
 use std::borrow::Cow;
 use anicraft_geom::edit::ANCHOR;
 use anicraft_geom::walk::CurveWalk;
@@ -72,7 +72,9 @@ pub enum Property {
     GreenOffset,
     BlueOffset,
     AlphaOffset,
-    /// A number of a filter on the target (ADR 0092), by the filter's place in its list.
+    /// A value of a filter on the target (ADR 0092), by the filter's place in its list: a
+    /// number, a channel of one of its colours, or quality and the switches, which are stepped
+    /// (ADR 0099).
     Filter(FilterProp),
 }
 
@@ -273,6 +275,12 @@ impl Property {
         }
     }
 
+    /// Whether a key of this property holds until the next key instead of travelling to it
+    /// (ADR 0099): a filter's quality and switches. Their values are whole numbers.
+    pub fn is_stepped(self) -> bool {
+        self.filter().is_some_and(|f| f.param.is_stepped())
+    }
+
     /// Position and transform (the properties the element's matrix holds).
     pub fn is_transform(self) -> bool {
         self.style().is_none() && !self.is_filter()
@@ -280,7 +288,8 @@ impl Property {
 
     fn clamp(self, v: f32) -> f32 {
         let r = self.range();
-        if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { 0.0 }
+        let v = if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { 0.0f32.clamp(*r.start(), *r.end()) };
+        if self.is_stepped() { v.round() } else { v }
     }
 }
 
@@ -375,20 +384,18 @@ pub fn own_value(el: &Element, p: Property) -> Option<f32> {
 }
 
 fn filter_entry(el: &Element, slot: u8) -> Option<&crate::FilterEntry> {
-    match &el.kind {
-        ElementKind::Symbol { filters, .. } => filters.get(usize::from(slot)),
-        _ => None,
-    }
+    el.kind.filters()?.get(usize::from(slot))
 }
 
-/// Every filter number the object has, in its list's order (the Motion Editor's filter rows).
+/// Every filter value the object has that a tween can animate, in its list's order (the Motion
+/// Editor's filter rows): each filter's numbers, colour channels, quality and switches.
 pub fn filter_properties(el: &Element) -> Vec<Property> {
-    let ElementKind::Symbol { filters, .. } = &el.kind else { return Vec::new() };
+    let Some(filters) = el.kind.filters() else { return Vec::new() };
     filters
         .iter()
         .take(usize::from(MAX_FILTER_SLOTS))
         .enumerate()
-        .flat_map(|(slot, e)| e.filter.params().iter().map(move |&param| Property::Filter(FilterProp { slot: slot as u8, param })))
+        .flat_map(|(slot, e)| e.filter.params().into_iter().map(move |param| Property::Filter(FilterProp { slot: slot as u8, param })))
         .collect()
 }
 
@@ -430,6 +437,11 @@ impl Track {
         // The segment [a, b) holding `frame`: binary search on the key frames.
         let i = self.keys.partition_point(|k| k.frame as f32 <= frame);
         let (a, b) = (self.keys.get(i.checked_sub(1)?)?, self.keys.get(i)?);
+        // A stepped property holds its key until the next one (ADR 0099): no ease, nothing in
+        // between, and exactly the next key's value from its frame on.
+        if self.property.is_stepped() {
+            return Some(a.value);
+        }
         let span = (b.frame - a.frame).max(1) as f32;
         let t = a.ease.apply((frame - a.frame as f32) / span);
         Some(a.value + (b.value - a.value) * t)
@@ -1125,7 +1137,9 @@ impl MotionTween {
         }
         // The filters' numbers (ADR 0092): a track whose filter isn't there, or has no such
         // number, does nothing (its filter was replaced by another kind).
-        if let ElementKind::Symbol { filters, .. } = &mut el.kind {
+        if self.tracks.iter().any(|t| t.property.is_filter())
+            && let Some(filters) = el.kind.filters_mut()
+        {
             for t in self.tracks.iter().filter(|t| t.property.is_filter()) {
                 if let (Some(f), Some(v)) = (t.property.filter(), t.value_at(frame))
                     && let Some(e) = filters.get_mut(usize::from(f.slot))
@@ -1954,10 +1968,176 @@ mod tests {
     }
 
     fn blur_x(e: &Element, slot: usize) -> Option<f32> {
-        match &e.kind {
-            ElementKind::Symbol { filters, .. } => filters.get(slot).and_then(|f| f.filter.param(FilterParam::BlurX)),
-            _ => None,
+        e.kind.filters()?.get(slot).and_then(|f| f.filter.param(FilterParam::BlurX))
+    }
+
+    /// ADR 0099: a filter's colour tweens channel by channel, in the units and the space of the
+    /// colour effect's tint (straight sRGB, 0–255; alpha in percent), each on its own curve.
+    #[test]
+    fn a_filter_colour_tweens_channel_by_channel() {
+        use crate::{Channel, FilterColor};
+        let glow = crate::Filter::Glow { blur_x: 5.0, blur_y: 5.0, strength: 1.0, quality: 1, color: Rgba::new(1.0, 0.0, 0.0, 1.0), inner: false, knockout: false };
+        let base = clip(0.0, vec![glow]);
+        let ch = |c: Channel| fp(0, FilterParam::Color(FilterColor::Color, c));
+        let colour = |e: &Element| e.kind.filters().and_then(|f| f.first()).and_then(|f| f.filter.color(FilterColor::Color)).unwrap();
+        // The object's own colour, in the Motion Editor's units.
+        assert_eq!([Channel::Red, Channel::Green, Channel::Blue, Channel::Alpha].map(|c| own_value(&base, ch(c))), [Some(255.0), Some(0.0), Some(0.0), Some(100.0)]);
+        // Red to blue, half transparent, over ten frames.
+        let mut m = MotionTween::new(ElementId(1));
+        for (c, to, own) in [(Channel::Red, 0.0, 255.0), (Channel::Blue, 255.0, 0.0), (Channel::Alpha, 50.0, 100.0)] {
+            m.set_key(ch(c), 10, to, own);
         }
+        assert_eq!(colour(&m.apply(&base, 0.0)), Rgba::new(1.0, 0.0, 0.0, 1.0));
+        // The midpoint: each channel half way, exactly what a tint's tween gives.
+        let mid = colour(&m.apply(&base, 5.0));
+        assert_eq!(mid, Rgba::new(0.5, 0.0, 0.5, 0.75));
+        assert_eq!(mid, Rgba::new(1.0, 0.0, 0.0, 1.0).lerp(Rgba::new(0.0, 0.0, 1.0, 0.5), 0.5), "the same as the colour's own lerp");
+        assert_eq!(colour(&m.apply(&base, 10.0)), Rgba::new(0.0, 0.0, 1.0, 0.5));
+        // Green has no track: the object's own, bit for bit. Each channel eases on its own.
+        if let Some(k) = m.track_mut(ch(Channel::Blue)).and_then(|t| t.keys.first_mut()) {
+            k.ease = Easing::QuadIn;
+        }
+        let eased = colour(&m.apply(&base, 5.0));
+        assert_eq!((eased.r, eased.g, eased.b), (0.5, 0.0, 0.25));
+        // A bevel's two colours and a ramp's stops are addressed the same way; a stop the ramp
+        // doesn't have does nothing.
+        let bevel = crate::Filter::new("bevel").unwrap();
+        assert_eq!(bevel.colors(), [FilterColor::Shadow, FilterColor::Highlight]);
+        let ramp = crate::Filter::new("gradient_bevel").unwrap();
+        assert_eq!(ramp.colors(), [FilterColor::Stop(0), FilterColor::Stop(1), FilterColor::Stop(2)]);
+        let base = clip(0.0, vec![bevel, ramp.clone()]);
+        let mut m = MotionTween::new(ElementId(1));
+        m.set_key(fp(0, FilterParam::Color(FilterColor::Highlight, Channel::Blue)), 4, 0.0, 255.0);
+        m.set_key(fp(1, FilterParam::Color(FilterColor::Stop(2), Channel::Red)), 4, 255.0, 0.0);
+        m.set_key(fp(1, FilterParam::Color(FilterColor::Stop(9), Channel::Red)), 4, 255.0, 0.0);
+        let at = m.apply(&base, 2.0);
+        let f = at.kind.filters().unwrap();
+        assert_eq!(f[0].filter.color(FilterColor::Highlight), Some(Rgba::new(1.0, 1.0, 0.5, 1.0)));
+        assert_eq!(f[0].filter.color(FilterColor::Shadow), Some(Rgba::BLACK), "the shadow keeps its own");
+        assert_eq!(f[1].filter.color(FilterColor::Stop(2)), Some(Rgba::new(0.5, 0.0, 0.0, 1.0)));
+        assert_eq!(f[1].filter.color(FilterColor::Stop(9)), None);
+        assert_eq!(own_value(&base, fp(1, FilterParam::Color(FilterColor::Stop(9), Channel::Red))), None);
+        assert_eq!(own_value(&base, fp(0, FilterParam::Color(FilterColor::Color, Channel::Red))), None, "a bevel has no single colour");
+    }
+
+    /// ADR 0099: quality and the switches are stepped: a key holds until the next key's frame,
+    /// where the value is exactly that key's; nothing in between, whatever the ease.
+    #[test]
+    fn switches_and_quality_hold_their_keys() {
+        let shadow = crate::Filter::new("drop_shadow").unwrap();
+        let base = clip(0.0, vec![shadow]);
+        let (knock, quality, hide) = (fp(0, FilterParam::Knockout), fp(0, FilterParam::Quality), fp(0, FilterParam::HideObject));
+        assert!(knock.is_stepped() && quality.is_stepped() && !fp(0, FilterParam::BlurX).is_stepped() && !Property::X.is_stepped());
+        let mut m = MotionTween::new(ElementId(1));
+        m.set_key(knock, 6, 1.0, 0.0);
+        m.set_key(quality, 4, 3.0, 1.0);
+        m.set_key(quality, 8, 2.2, 1.0);
+        // An ease on a stepped track changes nothing.
+        for t in &mut m.tracks {
+            for k in &mut t.keys {
+                k.ease = Easing::QuadIn;
+            }
+        }
+        let at = |f: f32| {
+            let e = m.apply(&base, f);
+            let f = e.kind.filters().unwrap()[0].filter.clone();
+            (f.param(FilterParam::Knockout).unwrap(), f.param(FilterParam::Quality).unwrap())
+        };
+        assert_eq!(at(0.0), (0.0, 1.0));
+        assert_eq!(at(3.0), (0.0, 1.0), "held: no travel toward the next key");
+        assert_eq!(at(3.99), (0.0, 1.0));
+        assert_eq!(at(4.0), (0.0, 3.0), "exact at the key's frame");
+        assert_eq!(at(5.9), (0.0, 3.0));
+        assert_eq!(at(6.0), (1.0, 3.0));
+        assert_eq!(at(8.0), (1.0, 2.0), "a key's value is a whole number");
+        assert_eq!(at(20.0), (1.0, 2.0));
+        assert_eq!(m.track(quality).unwrap().keys.iter().map(|k| k.value).collect::<Vec<_>>(), [1.0, 3.0, 2.0]);
+        // The filter itself holds the switch and the quality, not numbers.
+        let e = m.apply(&base, 7.0);
+        assert!(matches!(e.kind.filters().unwrap()[0].filter, crate::Filter::DropShadow { knockout: true, quality: 3, hide_object: false, .. }));
+        // Splitting the span keeps every frame: the second half starts with what held there.
+        let tail = m.split_at(&Props::of(&base), 5);
+        assert_eq!(tail.track(quality).unwrap().keys.iter().map(|k| (k.frame, k.value)).collect::<Vec<_>>(), [(0, 3.0), (3, 2.0)]);
+        assert_eq!(tail.track(knock).unwrap().keys.iter().map(|k| (k.frame, k.value)).collect::<Vec<_>>(), [(0, 0.0), (1, 1.0)]);
+        // A kind without the switch takes no key value from it (a blur has no Knockout).
+        assert_eq!(own_value(&clip(0.0, vec![crate::Filter::new("blur").unwrap()]), fp(0, FilterParam::Knockout)), None);
+        assert_eq!(own_value(&base, hide), Some(0.0));
+        // Files and repairs keep stepped values whole and in range.
+        let mut wild = m.clone();
+        if let Some(t) = wild.track_mut(quality) {
+            t.keys[1].value = 9.7;
+        }
+        assert!(!wild.is_sane());
+        wild.sanitize();
+        assert_eq!(wild.track(quality).unwrap().keys[1].value, 3.0);
+    }
+
+    /// ADR 0099: every value's name in files and commands reads back as itself, and the names
+    /// are the filter's own fields.
+    #[test]
+    fn filter_value_names_round_trip() {
+        use crate::{Channel, FilterColor};
+        let all = FilterParam::all();
+        assert_eq!(all.len(), crate::FILTER_PARAMS);
+        for (i, p) in all.iter().enumerate() {
+            assert_eq!(FilterParam::from_key(&p.key()), Some(*p), "{}", p.key());
+            assert_eq!(fp(0, *p).index(), PROPERTIES + i, "{}: tracks keep this order", p.key());
+            let r = p.range();
+            assert!(r.start() < r.end());
+        }
+        assert_eq!(fp(3, FilterParam::Color(FilterColor::Color, Channel::Red)).key(), "filter.3.color_red");
+        assert_eq!(fp(0, FilterParam::Color(FilterColor::Shadow, Channel::Alpha)).key(), "filter.0.shadow_color_alpha");
+        assert_eq!(fp(0, FilterParam::Color(FilterColor::Stop(14), Channel::Green)).key(), "filter.0.stop_14_green");
+        assert_eq!(Property::from_key("filter.2.Highlight-Color Blue"), Some(fp(2, FilterParam::Color(FilterColor::Highlight, Channel::Blue))));
+        assert_eq!(Property::from_key("filter.0.hide_object"), Some(fp(0, FilterParam::HideObject)));
+        for bad in ["filter.0.stop_15_red", "filter.0.stop_x_red", "filter.0.color", "filter.0.color_", "filter.0.colour_purple", "filter.0.stop_-1_red"] {
+            assert_eq!(Property::from_key(bad), None, "{bad}");
+        }
+        // In files they sit with the other filter tracks, apart from the twenty.
+        let mut m = MotionTween::new(ElementId(1));
+        m.set_key(fp(0, FilterParam::Color(FilterColor::Color, Channel::Red)), 4, 12.0, 255.0);
+        m.set_key(fp(0, FilterParam::Inner), 4, 1.0, 0.0);
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["filter_tracks"][0]["property"], "filter.0.color_red");
+        assert_eq!(v["filter_tracks"][1]["property"], "filter.0.inner");
+        assert!(v.get("tracks").is_none());
+        assert_eq!(serde_json::from_value::<MotionTween>(v).unwrap(), m);
+    }
+
+    /// ADR 0099: text takes filter tracks as a movie clip does.
+    #[test]
+    fn text_filters_tween_on_their_own_curves() {
+        let block = crate::TextBlock {
+            text: "Hi".into(),
+            font: "Test".into(),
+            size: 20.0,
+            bold: false,
+            italic: false,
+            color: Rgba::BLACK,
+            align: Default::default(),
+            letter_spacing: 0.0,
+            line_spacing: 0.0,
+            width: None,
+            outline: Arc::new(Path::rect(0.0, 0.0, 30.0, 16.0)),
+            box_width: 30.0,
+            box_height: 16.0,
+            field: None,
+            on_path: None,
+            filters: vec![crate::Filter::new("drop_shadow").unwrap().into()],
+            ..crate::TextBlock::default()
+        };
+        let text = Arc::new(block);
+        let base = Element { kind: ElementKind::Text(text.clone()), ..el(1, 0.0, 0.0) };
+        assert_eq!(filter_properties(&base).len(), 5 + 4 + 4);
+        let mut m = MotionTween::new(ElementId(1));
+        m.set_key(fp(0, FilterParam::Distance), 10, 24.0, 4.0);
+        assert_eq!(own_value(&m.apply(&base, 5.0), fp(0, FilterParam::Distance)), Some(14.0));
+        assert_eq!(text.filters[0].filter.param(FilterParam::Distance), Some(4.0), "the block the keyframe holds is untouched");
+        // Without filter tracks the block is shared, not copied.
+        let mut plain = MotionTween::new(ElementId(1));
+        plain.set_key(Property::X, 10, 50.0, 0.0);
+        let ElementKind::Text(t) = &plain.apply(&base, 5.0).kind else { panic!() };
+        assert!(Arc::ptr_eq(t, &text));
     }
 
     fn fp(slot: u8, param: FilterParam) -> Property {
@@ -1999,7 +2179,9 @@ mod tests {
         assert_eq!(own_value(&base, fp(1, FilterParam::BlurX)), Some(5.0));
         assert_eq!(own_value(&base, fp(1, FilterParam::Angle)), None, "a blur has no angle");
         assert_eq!(own_value(&base, fp(5, FilterParam::BlurX)), None);
-        assert_eq!(filter_properties(&base).len(), 5 + 2);
+        // Every value a tween can animate: the shadow's five numbers, its colour's four
+        // channels, quality and three switches; the blur's two numbers and quality (ADR 0099).
+        assert_eq!(filter_properties(&base).len(), (5 + 4 + 4) + (2 + 1));
     }
 
     /// In files a filter's track sits under `filter_tracks`, addressed `filter.<slot>.<param>`,

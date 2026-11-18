@@ -98,12 +98,12 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
     };
     let fixed = matches!(kind, LayerKind::Folder | LayerKind::Camera | LayerKind::Armature);
     let (mut submit, mut cancel) = (false, false);
-    egui::Window::new(tr!("Layer Properties")).id(egui::Id::new("layer_props")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0]).show(ctx, |ui| {
+    crate::windows::new(ctx, tr!("Layer Properties")).id(egui::Id::new("layer_props")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0]).show(ctx, |ui| {
         ui.set_min_width(420.0);
         form_row(ui, FORM_LABEL_DIALOG, tr!("Name"), |ui| {
             let r = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY)).named(tr!("Layer name"));
             if d.focus {
-                r.request_focus();
+                crate::theme::focus_selected(ui, &r, &d.name);
                 d.focus = false;
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -273,5 +273,51 @@ mod tests {
         // The menu command opens it too.
         app.invoke("layer.set_properties");
         assert!(app.layer_props.is_some());
+    }
+
+    #[test]
+    fn opening_layer_properties_selects_entire_name() {
+        let ctx = egui::Context::default();
+
+        // Start with a real new AniCraft document.
+        let document = anicraft_engine::doc::Document::default();
+        let session = Session::new(document);
+        let mut app = App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
+
+        // Get the name of the active layer.
+        let original = app.s.timeline().layer(app.s.layer).expect("A new document should have an active layer").name.clone();
+
+        assert!(!original.is_empty());
+
+        // Invoke the real Layer Properties command.
+        app.invoke("layer.set_properties");
+
+        // Confirm AniCraft populated the dialog correctly.
+        let dialog = app.layer_props.as_ref().expect("Layer Properties should open");
+
+        assert_eq!(dialog.name, original);
+        assert!(dialog.focus);
+
+        // Simulate three frames of the Layer Properties window.
+        for _ in 0..3 {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+
+            ctx.run_ui(input, |_| window(&mut app, &ctx)).textures_delta.clear();
+        }
+
+        // Find the focused text field.
+        let id = ctx.memory(|m| m.focused()).expect("The layer name field should have focus");
+
+        let state = egui::TextEdit::load_state(&ctx, id).expect("The name field should have editing state");
+
+        let selection = state.cursor.char_range().expect("The layer name should have a selection");
+
+        let a = selection.primary.index;
+        let b = selection.secondary.index;
+
+        // The entire existing name must be selected.
+        assert_eq!(a.min(b), egui::text::CharIndex(0));
+        assert_eq!(a.max(b), egui::text::CharIndex(original.chars().count()));
     }
 }

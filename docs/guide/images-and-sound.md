@@ -242,4 +242,3 @@ Lottie animations carry no sound. See [Exporting and Publish](exporting-and-publ
 
 * Picking a colour from a bitmap's pixels with the Eyedropper.
 * Panning beyond what the envelope does.
-* Sound playback in the web version.

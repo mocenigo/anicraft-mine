@@ -49,8 +49,9 @@ shows it in an installed copy) into the portable copy's `data` folder.
 **Preferences › About** shows which kind of copy you are running and every folder it uses, each
 with an **Open** button.
 
-There is also a web version that runs in a modern browser. It can't play sound, export video
-or install plug-ins yet, and menu items that can't work there are dimmed and say why.
+There is also a web version that runs in a modern browser. Sound starts on your first play
+through Web Audio. It can't export video or install plug-ins yet, and menu items that can't
+work there are dimmed and say why.
 
 To get newer versions later, choose **Help › Check for Updates…**.
 

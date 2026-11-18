@@ -144,7 +144,7 @@ and **Enter** to run it. Installed plug-ins show up here too.
 
 It's the fastest way to reach anything when you don't remember which menu it lives in.
 
-For a list of every shortcut, choose **Help › Keyboard Shortcuts** (**F1**). That sheet also
+For a list of every shortcut, choose **Help › Keyboard Shortcuts** (**Ctrl+Alt+Shift+K**). That sheet also
 lets you change them (see [Preferences, shortcuts and accessibility](preferences-shortcuts-accessibility.md)).
 
 ## Moving around the stage
@@ -164,7 +164,8 @@ lets you change them (see [Preferences, shortcuts and accessibility](preferences
 | Zoom out | **View › Zoom Out** (**Ctrl+-**), or **Alt**-click with the Zoom tool |
 | Fit the whole stage in the window | **View › Fit in Window** (**Ctrl+0**, or **Ctrl+2**) |
 | See the stage at actual size | **View › 100%** (**Ctrl+1**) |
-| Jump to a set zoom | the zoom menu at the right of the edit bar: Fit in window, 25 % to 800 % |
+| Jump to a set zoom | the arrow beside the zoom field at the right of the edit bar: Fit in window, 25 % to 800 % |
+| Type a zoom | click the zoom field, type a percentage (5 to 6400) and press **Enter** |
 
 ### The pasteboard
 
@@ -242,7 +243,7 @@ exactly as the movie will frame it. While the preview is on you can't edit artwo
 A movie can be split into scenes that play one after another. Each scene has its own
 timeline. Use the scene menu at the left of the edit bar to switch scenes and to manage them:
 
-* **Insert › Scene** adds a new scene.
+* **Insert › New Scene** adds a new scene.
 * **Modify › Scene** has **Duplicate Scene**, **Rename Scene**, **Delete Scene**, **Move
   Scene Earlier** and **Move Scene Later**.
 * **Control › Previous Scene** (**Shift+Page Up**) and **Control › Next Scene**
@@ -300,6 +301,10 @@ changes your document, including Properties edits, timeline changes and Library 
 drag is always a single step. The **History** panel at the bottom of the dock lists the steps
 by name. Click any step to jump back to it, and click a later (dimmed) one to go forward
 again.
+
+To keep steps you repeat, **Ctrl+click** them in the History panel and choose **Save As
+Command…**: they come back at the end of the Commands menu, to run on any selection as one step.
+See [Saved commands](saved-commands.md).
 
 Undo history is kept in memory while the document is open. It isn't saved with the file.
 

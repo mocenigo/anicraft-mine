@@ -186,7 +186,7 @@ impl Updates {
             let mut open = true;
             let mut install = false;
             let mut again = false;
-            egui::Window::new(tr!("Check for Updates"))
+            crate::windows::new(ctx, tr!("Check for Updates"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -418,13 +418,10 @@ mod tests {
         let mut app = crate::app::App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
         assert!(!app.s.is_dirty());
         assert!(safe_to_install(&app));
-        app.text_edit = Some(crate::app::TextEditing {
-            at: egui::Pos2::ZERO,
-            element: None,
-            text: "Uncommitted stage text".into(),
-            original: String::new(),
-            focus: false,
-        });
+        let mut te = crate::app::TextEditing::new(egui::Pos2::ZERO, None, None, &app.s.text_style);
+        te.text = "Uncommitted stage text".into();
+        te.focus = false;
+        app.text_edit = Some(te);
         assert!(!app.s.is_dirty(), "the edit has not reached Session yet");
         assert!(!safe_to_install(&app), "restarting would discard the text buffer");
         app.text_edit = None;

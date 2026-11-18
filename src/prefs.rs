@@ -154,6 +154,8 @@ pub struct Prefs {
     /// Filter presets of your own (ADR 0091), for movie clips and buttons in any document.
     #[serde(deserialize_with = "lenient_filter_presets")]
     pub filter_presets: anicraft_engine::filter_library::FilterLibrary,
+    /// The built-in filter presets you have hidden from the presets menu (ADR 0099), by name.
+    pub filter_presets_hidden: Vec<String>,
     /// Test Movie plays in a window of its own (ADR 0062); off, or where a system can't open
     /// one, it floats inside the editor.
     pub test_movie_window: bool,
@@ -240,6 +242,7 @@ impl Default for Prefs {
             start_screen: true,
             brushes: Default::default(),
             filter_presets: Default::default(),
+            filter_presets_hidden: Vec::new(),
             test_movie_window: true,
             test_movie_pos: None,
             workspaces: crate::dock::Workspaces::default(),
@@ -355,6 +358,9 @@ impl Prefs {
         self.recent = std::mem::take(&mut self.recent).sanitized();
         self.brushes = std::mem::take(&mut self.brushes).sanitized();
         self.filter_presets = std::mem::take(&mut self.filter_presets).sanitized();
+        // The library carries which built-in presets are hidden; names that aren't one go.
+        self.filter_presets.restore_hidden(&self.filter_presets_hidden);
+        self.filter_presets_hidden = self.filter_presets.hidden().to_vec();
         self.test_movie_pos = self.test_movie_pos.filter(|[x, y]| x.is_finite() && y.is_finite() && x.abs() < 1e5 && y.abs() < 1e5);
         self
     }
@@ -542,6 +548,20 @@ mod tests {
         assert!(!p.start_screen);
         let back = Prefs::from_json(&serde_json::to_string(&p).unwrap());
         assert_eq!(back.brushes, p.brushes);
+        // The built-in filter presets you have hidden (ADR 0099): none in older files; names
+        // that aren't a built-in preset's are dropped; they survive a save and load beside
+        // your own presets, whose list stays a plain list (what older builds read).
+        let p = Prefs::from_json(r#"{"ui_scale": 1.25}"#);
+        assert!(p.filter_presets_hidden.is_empty() && p.filter_presets.hidden().is_empty());
+        let p = Prefs::from_json(r#"{"filter_presets": [{"name": "Mine", "filters": [{"type": "blur"}]}, {"name": "Emboss", "filters": [{"type": "glow"}]}], "filter_presets_hidden": ["emboss", "Mine", "nope", "Soft Shadow"]}"#);
+        assert_eq!(p.filter_presets_hidden, ["Soft Shadow", "Emboss"]);
+        assert_eq!(p.filter_presets.hidden(), ["Soft Shadow", "Emboss"]);
+        let names: Vec<_> = p.filter_presets.presets().iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, ["Mine", "Emboss 2"], "a preset of yours named like a built-in one is numbered");
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(json["filter_presets"].is_array() && json["filter_presets_hidden"] == serde_json::json!(["Soft Shadow", "Emboss"]));
+        let back = Prefs::from_json(&json.to_string());
+        assert_eq!((back.filter_presets, back.filter_presets_hidden), (p.filter_presets, p.filter_presets_hidden));
         // Older files open Test Movie in its own window, with no remembered place (ADR 0062);
         // a place someone broke by hand is forgotten, not used.
         let p = Prefs::from_json(r#"{"ui_scale": 1.25}"#);

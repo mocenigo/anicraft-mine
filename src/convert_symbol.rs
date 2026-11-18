@@ -69,12 +69,12 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
     folders.sort_by_key(|(_, p)| p.to_lowercase());
     let (mut submit, mut cancel) = (false, false);
     let title = tr!("Convert to Symbol");
-    egui::Window::new(title).id(egui::Id::new("convert_symbol")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0]).show(ctx, |ui| {
+    crate::windows::new(ctx, title).id(egui::Id::new("convert_symbol")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0]).show(ctx, |ui| {
         ui.set_min_width(380.0);
         form_row(ui, FORM_LABEL_DOCK, tr!("Name"), |ui| {
             let r = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY)).named(tr!("Symbol name"));
             if d.focus {
-                r.request_focus();
+                crate::theme::focus_selected(ui, &r, &d.name);
                 d.focus = false;
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {

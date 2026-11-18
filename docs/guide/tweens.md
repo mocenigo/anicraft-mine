@@ -191,9 +191,25 @@ Motion Editor, below the colour effect, with its numbers under its name: **Blur 
 any other property, so a blur can sharpen with an ease-out and then pulse.
 
 You can also change a filter in **Properties › Filters** with the playhead inside the tween: the
-number you changed gets a key there, as moving the object does. Reordering or removing filters
-takes their keys along with them. A filter's colours, quality and switches aren't animated yet;
-they stay as the object has them.
+value you changed gets a key there, as moving the object does. Reordering or removing filters
+takes their keys along with them.
+
+**Colours.** Under a filter's numbers there is a row for each of its colours: **Colour** for a
+Drop Shadow or a Glow, **Shadow** and **Highlight** for a Bevel, and **Stop 1**, **Stop 2**… for
+the ramp of a Gradient Glow or Gradient Bevel. The swatch shows the colour at the playhead;
+click it and pick a colour to key it there. The diamond adds or removes the colour's key. To
+shape how the colour changes, click the row: it opens to **Red**, **Green**, **Blue** and
+**Alpha**, each with a curve and eases of its own, and a strip along the bottom of the graph
+shows the whole colour across the tween. Colours change the same way a Tint does, so a glow
+and a tint you keyed alike stay alike.
+
+**Quality and the switches.** **Quality**, **Inner**, **Knockout** and **Hide object** come
+last. They can't be half on, so a key holds until the next key: tick **Knockout** at frame 20
+and the artwork is knocked out from frame 20 on, not gradually. Their curves are steps and
+they take no ease. A filter's Type (inner, outer, full) and its eye (on or off) aren't
+animated; they stay as the object has them.
+
+Text takes filters too (see [Text](text.md#filters-on-text)), and they animate the same way.
 
 ### Moving keys in time
 

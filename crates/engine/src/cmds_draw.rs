@@ -27,8 +27,8 @@ pub fn specs() -> Vec<CommandSpec> {
         c("element.pick", "Select at Point", "", None, "{x, y, add?: bool, view?: stage|camera} the topmost element there on a visible, unlocked layer; `add` (Shift) adds it to the selection, or lets go of it, on any layer; with `view: camera` the point is on the movie's picture as the camera shows it (each layer through its depth)", false, pick),
         c("element.translate", "Move", "", None, "{dx, dy, snap?, from?: [x, y]} moves the selection, on every layer; with `snap` (a distance) one of its corners or ends, or its box's corners or centre (the nearest to `from`), then snaps within that distance by the snap engine's priority (ADR 0076): a point, guide, line or fill edge of the rest, the grid, a whole pixel", true, translate),
         c("element.set_transform", "Transform", "", None, "{x?, y?, sx?, sy?, rotation? (degrees)}", true, |s, p| s.each_layer(true, |s| set_transform(s, p))),
-        c("element.set_fill", "Fill Colour", "", None, "{color: \"#rrggbb\" | null}", true, |s, p| s.each_layer(false, |s| set_fill(s, p))),
-        c("element.set_stroke", "Stroke", "", None, "{color?: \"#rrggbb\" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}", true, |s, p| s.each_layer(false, |s| set_stroke(s, p))),
+        c("element.set_fill", "Fill Colour", "", None, "{color: \"#rrggbb\" | \"#rrggbbaa\" | null} (the alpha is the fill's own; 00 is a clear fill, not the same as null)", true, |s, p| s.each_layer(false, |s| set_fill(s, p))),
+        c("element.set_stroke", "Stroke", "", None, "{color?: \"#rrggbb\" | \"#rrggbbaa\" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}", true, |s, p| s.each_layer(false, |s| set_stroke(s, p))),
         c("element.set_alpha", "Alpha", "", None, "{alpha: 0..1} sets the alpha multiplier and keeps the rest of the colour effect (None becomes Alpha; Brightness and Tint become Advanced below 1)", true, |s, p| s.each_layer(true, |s| set_alpha(s, p))),
         c("element.set_color_effect", "Colour Effect", "", None, "{style?: none|brightness|tint|advanced|alpha (default: the style the values belong to, else each element's own), alpha? (%, 0..100), brightness? (%, -100..100), tint? (#rrggbb), tint_amount? (%, 0..100), red_multiplier?, green_multiplier?, blue_multiplier?, alpha_multiplier? (%, -100..100), red_offset?, green_offset?, blue_offset?, alpha_offset? (-255..255)} on every selected element (ADR 0056); values not given keep each element's own. A new style starts from the look it can keep: Advanced is exactly the effect before, Alpha keeps the opacity, Brightness and Tint start at 0 %. The camera has no opacity (no Alpha style, alpha multiplier or offset)", true, |s, p| s.each_layer(true, |s| set_color_effect(s, p))),
         c("element.set_blend", "Blending", "", None, "{mode: normal|layer|darken|multiply|lighten|screen|overlay|hardlight|add|subtract|difference|invert|alpha|erase} on the selected movie clip and button instances", true, |s, p| s.each_layer(false, |s| set_blend(s, p))),
@@ -357,8 +357,10 @@ fn set_transform(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(EngineError::Param("scale must be between 0.001 and 1000 in magnitude".into()));
         }
     }
-    let els = s.selected_elements_mut()?;
-    for e in els {
+    let units = raw_drawings(s);
+    let in_unit = |id: &ElementId| units.iter().any(|(ids, _)| ids.contains(id));
+    let mut els = s.selected_elements_mut()?;
+    for e in els.iter_mut().filter(|e| !in_unit(&e.id)) {
         let mut d: Decomposed = e.transform.decompose();
         if let Some(v) = x {
             d.tx = v;
@@ -377,7 +379,59 @@ fn set_transform(s: &mut Session, p: &Value) -> Result<Value> {
         }
         e.transform = d.compose();
     }
+    // A raw drawing turns and scales as one shape, about the centre of its pieces (#297): every
+    // piece takes the change that gives its first piece the values asked for.
+    for (ids, bounds) in &units {
+        let Some(reference) = ids.first().and_then(|id| els.iter().find(|e| e.id == *id)).map(|e| e.transform) else { continue };
+        let m = drawing_change(&reference, bounds.center(), [x, y, sx, sy, rot]);
+        for e in els.iter_mut().filter(|e| ids.contains(&e.id)) {
+            e.transform = m.mul(&e.transform);
+        }
+    }
     Ok(json!({"ok": true}))
+}
+
+/// The selected raw drawings of two or more pieces on the active layer: raw pieces that touch,
+/// such as a fill and the strokes on its edges (ADR 0042), and their combined bounds.
+fn raw_drawings(s: &Session) -> Vec<(Vec<ElementId>, anicraft_geom::Rect)> {
+    let layer = s.layer;
+    let (ids, boxes): (Vec<ElementId>, Vec<anicraft_geom::Rect>) = s
+        .selected_elements()
+        .into_iter()
+        .filter(|(l, e)| *l == layer && crate::merge::mergeable(e).is_some())
+        .map(|(l, e)| (e.id, s.element_bounds_on(l, e.id)))
+        .filter(|(_, b)| !b.is_empty())
+        .unzip();
+    crate::merge::touching_groups(&boxes)
+        .into_iter()
+        .filter(|g| g.len() > 1)
+        .map(|g| {
+            let members: Vec<ElementId> = g.iter().filter_map(|&i| ids.get(i).copied()).collect();
+            let b = g.iter().filter_map(|&i| boxes.get(i)).fold(anicraft_geom::Rect::EMPTY, |r, b| r.union(b));
+            (members, b)
+        })
+        .collect()
+}
+
+/// The stage-space change that gives `reference` the asked-for `[x, y, sx, sy, rotation°]`:
+/// scale, rotation and skew about `pivot`, then a move for the position.
+fn drawing_change(reference: &Affine, pivot: Vec2, [x, y, sx, sy, rot]: [Option<f32>; 5]) -> Affine {
+    let from = reference.decompose();
+    let mut to = from;
+    if let Some(v) = sx {
+        to.sx = v;
+    }
+    if let Some(v) = sy {
+        to.sy = v;
+    }
+    if let Some(v) = rot {
+        to.rotation = v.to_radians();
+    }
+    let linear = |d: &Decomposed| Decomposed { tx: 0.0, ty: 0.0, ..*d }.compose();
+    let turn = linear(&from).inverse().map_or(Affine::IDENTITY, |inv| linear(&to).mul(&inv));
+    let m = Affine::translate(pivot.x, pivot.y).mul(&turn).mul(&Affine::translate(-pivot.x, -pivot.y));
+    let at = m.mul(reference).translation();
+    Affine::translate(x.map_or(0.0, |v| v - at.x), y.map_or(0.0, |v| v - at.y)).mul(&m)
 }
 
 fn shapes_mut(s: &mut Session) -> Result<Vec<&mut Shape>> {
@@ -418,9 +472,17 @@ pub(crate) fn set_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     let default = s.style.clone();
     // Checked once up front, so a bad style param changes nothing.
     opt_stroke_style(p, &default.line, default.stroke_width)?;
-    for sh in shapes_mut(s)? {
+    let shapes = shapes_mut(s)?;
+    // A raw drawing's outline is its own stroke pieces (ADR 0042). When the selection holds
+    // strokes for the change, its raw fills take none of their own, which would draw the outline
+    // a second time over the pieces (#389).
+    let strokes_selected = shapes.iter().any(|sh| sh.merge && sh.stroke.is_some());
+    for sh in shapes {
         if remove {
             sh.stroke = None;
+            continue;
+        }
+        if strokes_selected && sh.merge && sh.stroke.is_none() {
             continue;
         }
         let mut st = sh.stroke.take().unwrap_or_else(|| default.new_stroke(default.stroke, default.stroke_width));
@@ -891,15 +953,17 @@ fn break_apart(s: &mut Session, _: &Value) -> Result<Value> {
             objects.push(c);
             continue;
         }
-        // Text breaks apart into a shape with the same outlines.
+        // Text breaks apart into shapes with the same outlines, one per colour (ADR 0085).
         if let ElementKind::Text(t) = &e.kind
             && sel.contains(&e.id)
         {
-            let mut c = (*e).clone();
-            c.id = ElementId(s.doc.alloc_id());
-            c.kind = ElementKind::Shape(crate::cmds_text::to_shape(t));
-            fresh_ids.push(c.id);
-            out.push(Arc::new(c));
+            for shape in crate::cmds_text::to_shapes(t) {
+                let mut c = (*e).clone();
+                c.id = ElementId(s.doc.alloc_id());
+                c.kind = ElementKind::Shape(shape);
+                fresh_ids.push(c.id);
+                out.push(Arc::new(c));
+            }
             continue;
         }
         // A group breaks apart into its members (Animate's Ctrl+B on a group ungroups it).

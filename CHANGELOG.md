@@ -2,6 +2,180 @@
 
 ## Unreleased
 
+* **Fixed: start-up, graphics and opening Flash files, from user reports** (ADR 0105, M8).
+  * Fixed: most `.fla` files saved by Flash CS5 to Animate were refused with "the archive is
+    damaged: the central directory is outside the archive" (#356, #385). Flash writes the
+    archive's closing record with the file list's size 54 bytes too large whenever `mimetype`
+    isn't the first file; AniCraft now reads those as Animate does. Archives that really are
+    damaged are still refused.
+  * Fixed: the cause of AniCraft closing as it opened or when its window was resized (#264,
+    #309, and most "won't open" reports: #421, #412, #313, #286, #285, #268, #164). The stage
+    handed its drawing to the graphics card while the window was setting itself up, which the
+    graphics library refuses ("Failed to wait for GPU to come idle before reconfiguring the
+    Surface"). 0.2.1 closed on that error; later builds survived it with a skipped frame and a
+    line about the graphics driver. Now it doesn't happen: stage drawing is handed over only
+    while a frame is being drawn. Measured: the error in 3 of 20 starts before, 0 of 20 after.
+  * Fixed: on a computer whose graphics driver crashes AniCraft as it starts, AniCraft opened
+    only every second time (#335). The way of drawing the window that crashed now stays last for
+    the next five starts, then gets one more chance, and is held back longer each time it fails
+    again (25, then 100 starts). `--renderer` still tries what you ask for first.
+  * Fixed: on Linux, after **Add to Applications Menu**, the menu and dock could keep showing a
+    generic icon when another installer had left an icon cache in `~/.local/share/icons`
+    (#348). The cache is brought up to date.
+  * The web version keeps fewer drawn frames in memory: 256 MB at most instead of 768 MB (#314:
+    900 MB for a short animation). The desktop is unchanged; idle, it uses no CPU.
+
+* **Fixes and polish from outside contributors** (M8). Thank you all.
+  * **Fixed: no menus on macOS** (fixes #187, #247, #398; Oskar Raszkiewicz). The window keeps
+    the standard macOS title bar and the menu row sits under it; before, the title bar covered
+    File, Edit and the rest unless the window was full screen (ADR 0006).
+  * **Fixed: Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+Shift+V did nothing on the stage** on desktop builds
+    (fixes #197; jayzed80). They copy, cut, paste and paste in place again; text fields keep
+    their own copy and paste.
+  * **Fixed: grouped artwork in Animate documents came in scaled and moved twice** (fixes #411;
+    Vincent Agerbech, with the nested-group test from NetterSilver). A 50% instance in a group
+    drew at 25%; group members now land where Animate puts them.
+  * **Selected raw artwork is easier to read** (fixes #295; Untoldent): finer, staggered dots in
+    a colour that contrasts with each fill, stroke or gradient instead of blue and white ones,
+    thin selected lines stay visible, and artwork on top hides the dots under it.
+  * **Raw drawings act as one shape** (scks1): Align and Distribute keep a fill and its outline
+    together (fixes #301), Rotation and Scale in Properties turn and scale a selected raw
+    drawing about its centre (fixes #297), and changing the stroke of a whole raw drawing no
+    longer gives its fills a second outline (the doubled stroke of #389).
+  * **A group's registration point is the centre of what was grouped** (Koolskull, ADR 0073),
+    not the corner of the stage, so Rotation and Scale in Properties turn it about itself. The
+    artwork stays where it was; edit the group to move the point.
+  * **Edit bar** (Untoldent, gmrmad1): inside a symbol, group or drawing object, one click on the
+    scene name goes back to the scene and the arrow beside it opens the scene menu (fixes #353);
+    scene rows in that menu are clickable across their whole width; Insert › Scene is now
+    **New Scene**. The zoom percentage is a field you can type in, with its presets on the
+    arrow beside it (fixes #43).
+  * **Properties › Scale has a lock** (fixes #304; gmrmad1): with it on, changing one of width
+    or height changes the other in proportion.
+  * **Names are selected when a dialog opens** (fixes #196, #322; Untoldent): Convert to Symbol,
+    Rename Layer, Rename Scene, Layer Properties and the other name prompts, so typing replaces
+    the name.
+  * **Timeline** (gmrmad1): dragging the playhead on the ruler stops at the last frame that has
+    material (fixes #352), and a playhead past the end of a scene no longer shows the next
+    scene's artwork on the stage (fixes #305).
+  * **Camera** (Kushagra Kumar): with the camera layer hidden, Preview Through Camera no longer
+    blocks drawing on the stage (fixes #126).
+* **From outside contributors** (M8; thank you).
+  * **Free Transform skews** (by mypenc, #176, for #174). Drag the line between two handles
+    of the selection box to shear the artwork along that edge, as in Animate: the opposite edge
+    stays put, **Alt** skews about the centre, and the cursor shows the direction. One undo
+    step per drag; works with Edit Multiple Frames.
+  * **Fill and stroke alpha** (by Koolskull, #354, ADR 0102). The colour picker has a labelled
+    **Alpha** row (a slider and a percent) for a solid fill and for a stroke, on the Tools
+    squares, the Colour panel and Properties; hex takes `#rrggbbaa`. A clear fill is still a
+    fill; no fill is the type None. Each stop of a gradient keeps its own alpha and its marker
+    shows it. A brush stroke that isn't fully opaque stays its own shape over what is behind
+    it, so crossings darken, and the ink is drawn at that alpha while the pen is down. Opaque
+    strokes join as before.
+  * **Remote control: an assistant edits the window you have open** (by lienatanael-dev, #216,
+    ADR 0104, `docs/control-protocol.md`). `anicraft --control 9878` (or
+    `ANICRAFT_CONTROL_PORT`) lets an assistant edit the open document through a port on this
+    computer only; `anicraft-cli mcp --bridge 9878` is the MCP server's five tools acting on
+    that window. Edits show at once and undo with Ctrl+Z; they wait while you drag, so undo
+    steps never mix; the status bar says "Remote control on (port 9878)". Off unless you start
+    AniCraft this way. Each run has a fresh token in `control.json` in the settings folder
+    (readable only by you; `ANICRAFT_CONTROL_TOKEN` overrides it); anything that isn't a JSON
+    request with that token is refused. Added in review: the port closes with the window, a
+    connection that sends nothing is dropped after 10 s, the token file is always created new
+    and owner-only, and a portable install keeps it in its own folder
+    (`ANICRAFT_CONTROL_FILE` tells the bridge where).
+  * **Georgian, ready for its translation** (by Davit Matchakhelidze, #160). Builds made with
+    craft-fonts embed Noto Sans Georgian as a fallback face and offer Georgian (`ka`) once its
+    catalog is in craft-i18n; a build without the face doesn't offer it, and a damaged font
+    file is never loaded.
+* **Fixes and polish from outside contributors.** Thank you all.
+  * **Shape tweens carry a raw shape's line with its fill** (#119, NetterSilver): when the two keyframes' lines have different numbers of pieces (a triangle into a hexagon), the pieces join into outlines that morph as the fill does, with no side left bare and no line left standing; a line on one keyframe only grows in or shrinks away, and shape hints steer the line too.
+  * **Flipping no longer squashes a shape to 1 %** (#116, jayzed80): the Scale fields in Properties show a mirrored scale as a negative percentage and never rewrite a value they only show.
+  * **SVG path data**: long runs of implicit line, curve and move commands keep every point (Mex).
+  * **Scripts**: `Math.round` keeps negative zero and `Math.min`/`Math.max` order signed zeros as ECMAScript does, in Test Movie and the HTML player alike (Mex); a surrogate pair written as two `\u` escapes in a string makes one character (NetterSilver).
+  * **Strokes**: an odd dash list of 9 to 15 lengths repeats whole instead of being cut mid-pattern, and a dotted line's spacing stays in range under overshooting eases (NetterSilver).
+  * **Geometry**: a rounded rectangle with a negative size is the same box as the plain one (NetterSilver), and a matrix whose inverse would overflow has none (Mex).
+  * **Commands**: a `bezier` ease with a malformed entry is refused rather than half-read, and a colour starting with `##` is not a colour (NetterSilver).
+  * **CLI and MCP**: `anicraft-cli <subcommand> --help` (and `help <subcommand>`) print that subcommand's usage (#153, jayzed80); the usage says which frame numbers are 1-based and which 0-based (#152, jayzed80); the MCP render caption reads `1280×720` (#311, Efe Şahinbaş); `--help` lists the light theme (Mex).
+  * **Docs**: plug-in element kinds and `null` bounds, opening Animate files directly from the CLI, and status notes that had gone out of date (Mex). Localisation tests for Hebrew dual plurals and the product name (nocturney).
+* **Licences: the shared libraries' exceptions, and the licence check back in CI.** `symphonia` (MPL-2.0, sound decoding through `craft-audio`) and `jpeg-encoder` (IJG, JPEG export through `craft-image-codecs`) are accepted as crate-scoped exceptions, named in `NOTICE` and `ATTRIBUTION.md`, with the reasons in `docs/legal/compliance.md`. CI runs `cargo deny check licenses bans sources` in its own job again, since the shared gate doesn't.
+* **Filters: animated colours and switches, built-in presets, and filters on text** (ADR 0099,
+  M5).
+  * **Filter colours animate** in a motion tween: a glow's or shadow's colour, a bevel's shadow
+    and highlight, and each stop of a gradient filter's ramp. The Motion Editor has a row per
+    colour with a swatch (pick a colour to key it at the playhead); click the row for its Red,
+    Green, Blue and Alpha curves. Colours change the way a Tint does.
+  * **Quality, Inner, Knockout and Hide object animate as steps**: a key holds until the next
+    one, so a switch turns on exactly at its frame.
+  * Editing a filter's colour or a switch in Properties inside a tween keys it, like its numbers.
+  * **Classic tweens between different filter lists** now fade: a filter only one keyframe has
+    fades in or out, and the ones both have change from one to the other (before, the first
+    keyframe's filters held).
+  * **Built-in filter presets**: Soft Shadow, Hard Shadow, Neon Glow, Outline, Emboss, Engrave,
+    Soft Focus and Greyscale. They can't be deleted; untick one under **Built-in Presets** to
+    take it off the menu (`filter.preset_hide`).
+  * **Filters on text**: static, dynamic and input text take filters in Properties as movie
+    clips do, on the stage, in Test Movie and in every export, and they tween. Animate files'
+    filters on text fields now come in instead of being reported.
+  * Headless: `motion.set_key {property: "filter.0.color", color: "#ff3ea5"}` keys a whole
+    colour; channels and switches are `filter.0.color_red`, `filter.0.knockout` and so on.
+
+* **Mixed armatures: symbols and shapes in one armature** (ADR 0098, M7).
+  * A body drawn as a shape that bends can carry a head, hands or props that are symbol
+    instances, and an instance's bone can end on a shape that then gets bones of its own. One
+    armature can hold several shapes with bones.
+  * With the **Bone tool**, drag from a shape's bone end onto a symbol instance, or from an
+    instance onto a shape and on inside it. The **Selection tool** poses the whole chain by IK;
+    poses tween, and springs and joint translation act across both kinds.
+  * The **Bind tool** binds and paints the points of the shape the picked bone is inside.
+  * **Remove Bone** frees the instances and shapes the bone moved, as they look.
+  * Headless: `bone.add` takes `parent` (a bone to continue from) and shapes as `to`;
+    `bone.info` lists `members`, `shapes` and whether the armature is `mixed`.
+  * Files: a document with a mixed armature is saved as format version 4, which earlier
+    versions refuse with a clear message. Every other document is saved exactly as before.
+  * Fixed: duplicating a symbol that holds a shape armature kept the copy's shape from bending.
+* **Styled text: per-character and paragraph styles** (ADR 0085, M5).
+  * Select characters while typing on the stage and set their **font, size, colour, bold,
+    italic, letter spacing, superscript or subscript, underline and link** in Properties; the
+    section shows what the selection shares and marks the rest **mixed**.
+  * **Paragraph styles**: alignment, first-line indent, left and right margins and line spacing
+    per paragraph.
+  * Typing continues the style before the caret; copy and paste inside AniCraft keeps styles,
+    text from other apps pastes plain.
+  * Each run is shaped on its own and lines wrap across runs; outlines are stored as before, so
+    older files open and save unchanged. Every export draws each colour; SVG writes links.
+    Break Apart gives one shape per colour.
+  * **Animate files** keep their `DOMTextRun` styles in one block per field (they were split into
+    a block per style before), with superscripts, indents, margins and links.
+  * Headless: `text.style`, `text.paragraph`, `text.styles`; `text.create` and `text.edit` take
+    `runs` and `paragraphs`.
+* **Floating windows open below the menu bar**: no dialog (the Custom Ease window among them) can
+  cover File, Edit and View any more.
+* **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
+* **Saved commands (command macros)** (ADR 0097, M6).
+  * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
+    Command…**: the steps come back at the end of the **Commands** menu, to run on whatever is
+    selected as **one undo step**. Steps that name a layer or object of this document act on the
+    active layer or the selection instead; a step that can't be kept (the clipboard, particular
+    path points or Library items) is named with the reason.
+  * A run that fails at a step changes nothing and says which step stopped it.
+  * **Commands › Manage Saved Commands…**: run, reorder, rename, delete, give a **shortcut** (the
+    Keyboard Shortcuts editor, under Commands) and add one from a file. **Commands › Run
+    Command…** runs a saved command file.
+  * Saved commands are small JSON files in the settings folder's `Commands`, easy to share. They
+    may do only what a plug-in may (no files, clipboard or preferences), and plug-ins can't run
+    them. `anicraft-cli run` takes them; `macro.*` commands work headless and over MCP.
+* **Search the user guide, and help for what you are working on** (ADR 0096, M8).
+  * **Search** in every page of the bundled guide, offline: results as you type with the
+    chapter, heading and a passage with your words marked; `/` goes to the field, arrows move
+    through results, Enter opens one. `anicraft-cli guide search <words>` prints the same results.
+  * **F1** opens the guide at the section for the dialog in front, the panel or tool under the
+    pointer, the focused panel or the tool in hand (F1 on the Bone tool: building an armature).
+    Also **Help › Help for This**, **Help › Search the User Guide**, **? Help for…** in every
+    panel menu, and F1 on a command in the command palette.
+  * The keyboard shortcut editor moves from F1 to **Ctrl+Alt+Shift+K**, as in Animate.
+  * A new chapter, **Using this guide**.
+
 * **Sound output polish** (ADR 0095, M5).
   * The playhead follows the sound being **heard**: the device's latency is taken off and slow
     frames are dropped rather than drifting (within a frame over an hour of play in tests).

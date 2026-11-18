@@ -29,12 +29,13 @@ pub mod width;
 pub mod stroke_style;
 pub mod player;
 pub mod publish;
+pub mod rich_text;
 pub mod sample;
 pub mod templates;
 pub mod sound;
 pub mod swatch;
 
-pub use filter::{FILTER_PARAMS, Filter, FilterEntry, FilterParam, FilterProp, FilterSide, MAX_FILTER_SLOTS, active as active_filters, any_active as any_active_filter, pairs_up as filters_pair_up, MAX_BLUR, MAX_QUALITY, MAX_RAMP_STOPS, REST_SNAP, default_bevel_ramp, default_glow_ramp, pinned_stop, ramp_at};
+pub use filter::{Channel, FILTER_PARAMS, Filter, FilterColor, FilterEntry, FilterParam, FilterProp, FilterSide, MAX_FILTER_SLOTS, pairing as filter_pairing, active as active_filters, any_active as any_active_filter, pairs_up as filters_pair_up, MAX_BLUR, MAX_QUALITY, MAX_RAMP_STOPS, REST_SNAP, default_bevel_ramp, default_glow_ramp, pinned_stop, ramp_at};
 pub use bitmap::{Bitmap, BitmapId, ImageError, MAX_BITMAP_EDGE, Pixels, base64_decode, base64_encode, decode_png, image_to_png};
 pub use easing::{CustomEase, EaseDir, EaseFamily, EasePoint, Easing, Handle, MAX_EASE_NAME, MAX_EASE_POINTS, MAX_EASE_SAMPLES, MAX_EASE_Y, MAX_SAVED_EASES, SampledEase, SavedEase, ease_name};
 pub use color_effect::{ADVANCED_ADD, ADVANCED_MUL, ColorEffect, ColorStyle, ColorTransform};
@@ -48,6 +49,7 @@ pub use camera::{Camera, DepthKey};
 pub use swatch::{MAX_SWATCHES, Swatch, SwatchPaint};
 pub use aids::{Aids, GUIDE_REACH, Grid, Guide, GuideAxis, MAX_GUIDES};
 pub use nine_slice::symbol_box;
+pub use rich_text::{BaselineShift, CharStyle, MAX_TEXT_RUNS, MAX_URL, ParagraphStyle, StyleSummary, TextFill, TextRun, safe_url};
 pub use armature::{Armature, Bone, BoneId, JointAngle, Limits, Pose};
 pub use eval::{DisplayItem, DisplayList, Group, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_shown, evaluate_player, evaluate_scene, evaluate_scene_camera, evaluate_timeline, evaluate_timeline_at, guide_walk, instance_start};
 pub use actions::{Action, ButtonEvent, EventHandler, FrameScript, Language, PluginScript, SourceScript};
@@ -96,7 +98,8 @@ impl Rgba {
     }
     /// Parses `#rrggbb`, `rrggbb` or `#rrggbbaa`.
     pub fn parse_hex(s: &str) -> Option<Rgba> {
-        let h = s.trim().trim_start_matches('#');
+        let s = s.trim();
+        let h = s.strip_prefix('#').unwrap_or(s);
         if !h.is_ascii() || (h.len() != 6 && h.len() != 8) {
             return None;
         }
@@ -589,6 +592,25 @@ pub enum ElementKind {
 }
 
 impl ElementKind {
+    /// The filter list of what takes filters: a symbol instance (movie clips and buttons draw
+    /// them) or a block of text (ADR 0099). `None` for everything else.
+    pub fn filters(&self) -> Option<&[FilterEntry]> {
+        match self {
+            ElementKind::Symbol { filters, .. } => Some(filters),
+            ElementKind::Text(t) => Some(&t.filters),
+            _ => None,
+        }
+    }
+
+    /// The same list, to change (a text block shared with another element is copied first).
+    pub fn filters_mut(&mut self) -> Option<&mut Vec<FilterEntry>> {
+        match self {
+            ElementKind::Symbol { filters, .. } => Some(filters),
+            ElementKind::Text(t) => Some(&mut Arc::make_mut(t).filters),
+            _ => None,
+        }
+    }
+
     /// A group of `elements` (ADR 0073), on one layer with id `layer`.
     pub fn group(layer: LayerId, elements: Vec<Arc<Element>>) -> ElementKind {
         let mut l = Layer::new(layer, "Layer 1");
@@ -777,6 +799,73 @@ pub struct TextBlock {
     /// `outline` holds the glyphs set along it. Static text only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_path: Option<TextPath>,
+    /// Filters, applied in order to the text as it is drawn (its box and border included), as
+    /// on a movie clip (ADR 0099); each may be switched off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<FilterEntry>,
+    /// The first run's baseline shift, underline and link (ADR 0085).
+    #[serde(default, skip_serializing_if = "rich_text_is_normal")]
+    pub shift: BaselineShift,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub underline: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
+    /// The first paragraph's indent and margins (ADR 0085).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub indent: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub left_margin: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub right_margin: f32,
+    /// Styled runs covering the text, when its characters differ in style (ADR 0085; empty:
+    /// all in the style above). Set with [`TextBlock::set_styles`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<TextRun>,
+    /// One style per paragraph, when they differ (empty: all as above).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paragraphs: Vec<ParagraphStyle>,
+    /// The outline cut into pieces by colour and link, in order (empty: all in `color`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fills: Vec<TextFill>,
+    #[serde(skip)]
+    pub fill_cache: rich_text::FillCache,
+}
+
+fn rich_text_is_normal(s: &BaselineShift) -> bool {
+    *s == BaselineShift::Normal
+}
+
+impl Default for TextBlock {
+    fn default() -> Self {
+        TextBlock {
+            text: String::new(),
+            font: String::new(),
+            size: 32.0,
+            bold: false,
+            italic: false,
+            color: Rgba::BLACK,
+            align: TextAlign::Left,
+            letter_spacing: 0.0,
+            line_spacing: 0.0,
+            width: None,
+            outline: Arc::new(Path::new()),
+            box_width: 0.0,
+            box_height: 0.0,
+            field: None,
+            on_path: None,
+            filters: Vec::new(),
+            shift: BaselineShift::Normal,
+            underline: false,
+            url: String::new(),
+            indent: 0.0,
+            left_margin: 0.0,
+            right_margin: 0.0,
+            runs: Vec::new(),
+            paragraphs: Vec::new(),
+            fills: Vec::new(),
+            fill_cache: rich_text::FillCache::default(),
+        }
+    }
 }
 
 /// The path a text block follows (ADR 0070), and where along it the text sits.
@@ -1932,6 +2021,12 @@ impl Document {
         }
         all.into_iter()
     }
+    /// Whether any armature of the document is mixed (ADR 0098): instances and shapes in one
+    /// armature, or several shapes with bones. Such a document is written as format version 4,
+    /// which earlier builds refuse by its number; every other document is written as before.
+    pub fn has_mixed_armatures(&self) -> bool {
+        self.timelines().flat_map(|tl| &tl.layers).any(|l| l.kind == LayerKind::Armature && l.armature.as_ref().is_some_and(|a| a.is_mixed()))
+    }
     /// Repairs a loaded document: ids, sizes and keyframe order.
     pub fn sanitize(&mut self) {
         let s = &mut self.stage;
@@ -2266,6 +2361,8 @@ mod tests {
         assert_eq!(c.to_hex(), "#ff8000");
         assert!(Rgba::parse_hex("zz").is_none());
         assert!(Rgba::parse_hex("ééé").is_none());
+        assert!(Rgba::parse_hex("##ff0000").is_none());
+        assert!(Rgba::parse_hex("ff0000").is_some());
     }
 
     #[test]

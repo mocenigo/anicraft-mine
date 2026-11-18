@@ -29,6 +29,22 @@ accepts `webpki-root-certs` 1.0.12 under CDLA-Permissive-2.0 for Mozilla certifi
 in by the HTTPS verifier. It applies only to that data crate and version; the code licence
 allowlist is unchanged.
 
+**Shared-library exceptions (approved by the project lead, 2026-11-17).** The move to the shared
+Craft crates brought two licences the allowlist doesn't name. Both are accepted as crate-scoped
+exceptions in `deny.toml`, and the allowlist itself is unchanged:
+
+* `symphonia` 0.6 and its sub-crates, **MPL-2.0**, through `craft-audio` (sound decoding).
+  MPL-2.0 is file-level copyleft: AniCraft uses the files unmodified, names them in
+  `ATTRIBUTION.md` with a link to their source, and keeps its own code under MIT OR Apache-2.0.
+  Modifying a symphonia file would make that file's changes MPL-2.0.
+* `jpeg-encoder` 0.6, **(MIT OR Apache-2.0) AND IJG**, through `craft-image-codecs` (JPEG
+  export). The IJG licence asks for an acknowledgement, which is in `NOTICE`.
+
+`symphonia-codec-aac` is an AAC decoder, and AAC is a patent-pool codec (section 4). Whether the
+shared libraries make it opt-in, and whether they move to their own permissive decoders, is
+tracked with that team in storytold/craft-libs#2100. CI runs `cargo deny check licenses bans
+sources` in its own job again (the shared gate doesn't).
+
 ```sh
 cargo deny check licenses bans sources   # policy in deny.toml; must pass before every commit
 cargo deny check advisories              # RustSec security advisories (needs network)
@@ -141,7 +157,8 @@ Apache-2.0) with `ogg` (BSD-3-Clause), `nanomp3` and `nanomp3-core` (MP3 decodin
 Apache-2.0), and in the desktop app `cpal` (sound output, Apache-2.0) with its platform crates
 (`windows` on Windows, `alsa`/`alsa-sys` on Linux and the BSDs, MIT OR Apache-2.0; CoreAudio
 bindings on macOS). No new licence. `symphonia`, the usual Rust decoder, is MPL-2.0 and was not
-used.
+used then; it came in later through the shared `craft-audio` crate (see the shared-library
+exceptions above).
 
 Sound output in the browser (2026-11-13, ADR 0095) uses the same `cpal` with its `wasm-bindgen`
 feature (Web Audio), which brings only crates already in the web build or under MIT OR
@@ -241,4 +258,5 @@ No new crate. The installers are built with tools that are not Rust dependencies
 | "AniCraft" trademark clearance | Settled by the project lead (2026-11-09): the name is kept |
 | Freedom-to-operate patent search for core animation features | Open (recommended before 1.0) |
 | Full licence-text bundle generation (`cargo about`) in the release pipeline | Open (M8; the installers ship `LICENSE-*`, `NOTICE`, `ATTRIBUTION.md` and the font OFLs today) |
+| MPL-2.0 `symphonia` (incl. an AAC decoder) and IJG `jpeg-encoder` through the shared crates | Accepted as exceptions by the project lead (2026-11-17); opt-in AAC and permissive decoders raised in storytold/craft-libs#2100; counsel to confirm the AAC decoder |
 | WiX's MS-RL parts inside the MSI (WixUI, `Wix4UtilCA`) and the AppImage runtime's LGPL libfuse3 | Open: family-wide practice, counsel to confirm (ADR 0026) |

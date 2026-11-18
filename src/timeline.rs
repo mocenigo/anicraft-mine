@@ -36,6 +36,14 @@ fn start_pad(cell_w: f32, extra: f32) -> f32 {
 fn frame_center(cell_left: f32, cell_w: f32) -> f32 {
     (cell_left + cell_w * 0.5).round() + 0.5
 }
+
+/// Where the playhead goes when the ruler is clicked or dragged: the pointed-to frame,
+/// stopped at the last frame that has material (#352), so the playhead never leaves the
+/// edited timeline. Cell clicks, keys and `timeline.goto` keep their own behaviour.
+fn playhead_target(frame: u32, frames: u32) -> u32 {
+    frame.min(frames.saturating_sub(1))
+}
+
 const FOOTER_H: f32 = 38.0;
 /// The bottom bar's frame zoom and Frame View at its right end: the 56 pt slider, its field, the
 /// menu button and spacing.
@@ -281,8 +289,13 @@ pub fn paste_params(app: &App) -> Option<serde_json::Value> {
 /// An icon button: a full-size target around a Lucide glyph, named by its tooltip.
 /// `on` is a toggle's state (`None` for a plain button); a toggle that is on is filled.
 pub fn icon_button(ui: &mut egui::Ui, tip: &str, on: Option<bool>, icon: Icon) -> egui::Response {
+    icon_button_wide(ui, tip, on, icon, TARGET + 4.0)
+}
+
+/// [`icon_button`] at another width: narrower at the end of a row of fields in a narrow panel.
+pub fn icon_button_wide(ui: &mut egui::Ui, tip: &str, on: Option<bool>, icon: Icon, width: f32) -> egui::Response {
     let active = on == Some(true);
-    let (rect, resp) = ui.allocate_exact_size(vec2(TARGET + 4.0, TARGET), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, TARGET), Sense::click());
     // Same language as the tools: a toggle that is on is a lighter gray block, icon white.
     let bg = if active {
         T.active
@@ -529,7 +542,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.onion_ui.drag.is_none()
         && let Some(p) = ruler_resp.interact_pointer_pos() {
             app.playing = false;
-            app.run("timeline.goto", json!({"frame": frame_at(p.x)}));
+            app.run("timeline.goto", json!({"frame": playhead_target(frame_at(p.x), app.s.frame_count())}));
         }
     // The onion menu on a right-click, as the markers live here (ADR 0047).
     ruler_resp.context_menu(|ui| crate::onion::menu(app, ui));
@@ -1872,5 +1885,64 @@ mod tests {
         assert!(FrameSel::cell(LayerId(1), 0).has_keys(&ls));
         // A deleted layer invalidates the selection.
         assert!(FrameSel { anchor: (LayerId(9), 0), head: (LayerId(1), 0) }.layers(&ls).is_empty());
+    }
+
+    #[test]
+    fn the_ruler_playhead_stops_at_the_last_frame_with_material() {
+        use egui::{Event, Modifiers, PointerButton, Pos2};
+        fn frame(ctx: &egui::Context, app: &mut App, events: Vec<Event>, modifiers: Modifiers) {
+            let mut all = vec![Event::ModifiersChanged(modifiers)];
+            all.extend(events);
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), events: all, ..Default::default() };
+            ctx.run_ui(input, |ui| app.frame(ui)).textures_delta.clear();
+        }
+        fn settle(ctx: &egui::Context, app: &mut App) {
+            for _ in 0..3 {
+                frame(ctx, app, Vec::new(), Modifiers::NONE);
+            }
+        }
+        fn button(pos: Pos2, pressed: bool, modifiers: Modifiers) -> Event {
+            Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers }
+        }
+        fn drag(ctx: &egui::Context, app: &mut App, from: Pos2, to: Pos2, modifiers: Modifiers) {
+            frame(ctx, app, vec![Event::PointerMoved(from)], modifiers);
+            frame(ctx, app, vec![button(from, true, modifiers)], modifiers);
+            for i in 1..=10 {
+                frame(ctx, app, vec![Event::PointerMoved(from + (to - from) * (i as f32 / 10.0))], modifiers);
+            }
+            frame(ctx, app, vec![button(to, false, modifiers)], modifiers);
+            settle(ctx, app);
+        }
+        fn click(ctx: &egui::Context, app: &mut App, at: Pos2, modifiers: Modifiers) {
+            frame(ctx, app, vec![Event::PointerMoved(at)], modifiers);
+            frame(ctx, app, vec![button(at, true, modifiers)], modifiers);
+            frame(ctx, app, vec![button(at, false, modifiers)], modifiers);
+            settle(ctx, app);
+        }
+        assert_eq!(playhead_target(26, 8), 7);
+        assert_eq!(playhead_target(3, 8), 3);
+        assert_eq!(playhead_target(0, 0), 0);
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.show_panel(crate::dock::Panel::Timeline);
+        let layer = app.s.layer;
+        app.run("timeline.insert_frame", json!({"layer": layer.0, "frame": 0, "count": 7}));
+        app.s.set_frame(0);
+        settle(&ctx, &mut app);
+        assert_eq!(app.s.frame_count(), 8);
+        // Where the active row's frames are drawn, as the timeline drew them.
+        let row = ctx.data(|d| d.get_temp::<(egui::Rect, f32, f32, f32)>(egui::Id::new("tl_geometry")));
+        let Some((cells, x0, cell_w, scroll)) = row else { panic!("the timeline drew") };
+        // The ruler sits directly above the cells; the frame's column is its centre.
+        let y = cells.top() - RULER_H / 2.0;
+        let x = |f: u32| x0 + (f as f32 - scroll) * cell_w + cell_w * 0.5;
+        // Dragging past the material stops at the last frame that has it (#352).
+        drag(&ctx, &mut app, pos2(x(2), y), pos2(x(26), y), Modifiers::NONE);
+        assert_eq!(app.s.frame, 7);
+        // A click past the end clamps too, while a drag inside still moves freely.
+        drag(&ctx, &mut app, pos2(x(7), y), pos2(x(3), y), Modifiers::NONE);
+        assert_eq!(app.s.frame, 3);
+        click(&ctx, &mut app, pos2(x(12), y), Modifiers::NONE);
+        assert_eq!(app.s.frame, 7);
     }
 }

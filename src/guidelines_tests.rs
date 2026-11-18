@@ -1,6 +1,8 @@
 //! Enforces docs/ui-guidelines.md: typography and colour come from `theme`, never raw values.
 
-const SOURCES: [(&str, &str); 31] = [
+const SOURCES: [(&str, &str); 33] = [
+    ("rich_edit.rs", include_str!("rich_edit.rs")),
+    ("windows.rs", include_str!("windows.rs")),
     ("ease_editor.rs", include_str!("ease_editor.rs")),
     ("colour.rs", include_str!("colour.rs")),
     ("drop.rs", include_str!("drop.rs")),
@@ -194,5 +196,35 @@ fn data_roles_are_monospace_and_prose_roles_are_not() {
     }
     for t in [Type::Title, Type::Heading, Type::Body, Type::Label, Type::Caption] {
         assert_eq!(font(t).family, FontFamily::Proportional, "{t:?}");
+    }
+}
+
+/// Every floating window comes from `crate::windows::new`, which keeps it below the menu bar
+/// (a dialog's title bar must never cover File, Edit, View).
+#[test]
+fn floating_windows_stay_below_the_menu_bar() {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    assert!(files.len() > 40);
+    let opened = ["egui::Window::new(", concat!("Window", "::new(")];
+    for f in files {
+        let name = f.file_name().unwrap().to_string_lossy().to_string();
+        if name == "windows.rs" || name.ends_with("tests.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&f).unwrap();
+        for o in opened {
+            assert!(!src.contains(o), "{name} opens a window with {o}; use crate::windows::new (kept below the menu bar)");
+        }
     }
 }
